@@ -1,0 +1,1 @@
+# Converts balance sheets & bank logs to Markdown/JSON

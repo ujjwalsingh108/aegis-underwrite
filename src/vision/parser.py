@@ -1,0 +1,1 @@
+# Docling / Vision-LLM extraction worker

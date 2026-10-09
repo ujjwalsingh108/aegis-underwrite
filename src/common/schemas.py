@@ -1,0 +1,1 @@
+# Pydantic models for Underwriting Memo, Extracted Tables
