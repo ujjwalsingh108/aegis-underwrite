@@ -74,3 +74,6 @@ minversion = "8.0"
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
