@@ -1,1 +1,4 @@
-# Modal App definition & container images
+"""
+Defines the Modal container environment, installs CUDA drivers, PyTorch, 
+and vLLM, and sets up network volumes.
+"""
