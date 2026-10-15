@@ -16,8 +16,15 @@ class AppSettings(BaseSettings):
     app_name: str = "aegis-underwrite"
     modal_volume_name: str = "aegis-underwrite-volume"
 
+    # Compute & Hardware Selection (Set USE_GPU=True once card is linked)
+    use_gpu: bool = False
+    gpu_type: str = "A10G"
+    cpu_cores: float = 2.0
+    memory_mb: int = 4096
+
     # Model & Adapter Paths
-    base_model_name: str = "Qwen/Qwen2.5-7B-Instruct"
+    # When running on CPU, we use a lightweight instruction model or fallback to 1.5/3B
+    base_model_name: str = "Qwen/Qwen2.5-1.5B-Instruct"
     lora_output_dir: str = "/vol/lora_adapters"
 
     # Business Underwriting Thresholds

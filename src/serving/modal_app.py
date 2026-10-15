@@ -1,34 +1,45 @@
 """
-Defines the Modal container environment, installs CUDA drivers, PyTorch, 
+Defines the Modal container environment, installs CUDA drivers, PyTorch,
 and vLLM, and sets up network volumes.
 
 Modal application definition and container environment configuration for GPU
 accelerated serverless workloads.
+
+When using CPU, vllm won't run efficiently or may fail without CUDA. Instead,
+we use Hugging Face transformers with torch configured to CPU inference, which
+switches to vllm automatically when GPU is enabled.
 """
 
 import modal
 from src.common.config import settings
 
 # 1. Define the persistent network volume for caching weights and adapters
-app_volume = modal.Volume.from_name(
-    settings.modal_volume_name, create_if_missing=True
-)
+app_volume = modal.Volume.from_name(settings.modal_volume_name, create_if_missing=True)
 
-# 2. Build the GPU container image
-vllm_image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .pip_install(
-        "vllm>=0.6.0",
-        "torch>=2.4.0",
-        "transformers>=4.44.0",
-        "accelerate>=0.33.0",
-        "huggingface_hub>=0.24.0",
-        "hf_transfer>=0.1.8",
-        "pydantic>=2.7.0",
-        "pydantic-settings>=2.2.0",
-    )
-    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
-)
+# 2. CPU runtime image (No CUDA required, builds quickly, completely free)
+cpu_image = modal.Image.debian_slim(python_version="3.11").pip_install(
+    "torch>=2.2.0",
+    "transformers>=4.44.0",
+    "accelerate>=0.33.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.0",
+    "pypdf>=4.2.0",
+    "pdfplumber>=0.11.0",
+    "huggingface_hub>=0.24.0",
+).add_local_python_source("src")
+
+# GPU vLLM image (Used when settings.use_gpu is True)
+gpu_image = modal.Image.debian_slim(python_version="3.11").pip_install(
+    "vllm>=0.6.0",
+    "torch>=2.4.0",
+    "transformers>=4.44.0",
+    "accelerate>=0.33.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.0",
+    "pypdf>=4.2.0",
+    "pdfplumber>=0.11.0",
+    "huggingface_hub>=0.24.0",
+).add_local_python_source("src")
 
 # 3. Instantiate the Modal App
 app = modal.App(name=settings.app_name)
