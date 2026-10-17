@@ -28,7 +28,7 @@ def test_calculate_liquidity_runway():
     assert calculate_liquidity_runway(liquid_assets=30000.0, monthly_obligations=5000.0) == 6.0
     assert calculate_liquidity_runway(liquid_assets=0.0, monthly_obligations=5000.0) == 0.0
 
-def test_evaluate_ratio_pass():
+def test_evaluate_ratios_pass():
     financials = ApplicantFinancials(
         applicant_id="app_valid",
         stated_monthly_income=150000.0,
