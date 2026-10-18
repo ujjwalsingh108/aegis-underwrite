@@ -1,6 +1,6 @@
 # Pydantic models for Underwriting Memo, Extracted Tables
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, Field
@@ -18,10 +18,10 @@ class ApplicantFinancials(BaseModel):
     total_monthly_debt: float = Field(..., ge=0, description="Existing recurring monthly debt obligations")
     liquid_assets: float = Field(..., ge=0, description="Total accessible cash and equvivalents")
     annual_operating_income: Optional[float] = Field(
-        None, ge=0, description="Annual net operating income for corporate underwriting"
+        default=None, ge=0, description="Annual net operating income for corporate underwriting"
     )
     annual_debt_service: Optional[float] = Field(
-        None, ge=0, description="Total annual debt service principal and interest"
+        default=None, ge=0, description="Total annual debt service principal and interest"
     )
 
 class ExtractedFinancialMetrics(BaseModel):
@@ -39,7 +39,7 @@ class ExtractedFinancialMetrics(BaseModel):
 class AuditTrialEntry(BaseModel):
     """Record of individual verification and processing steps."""
     step_name: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: str
     details: Optional[str] = None
 
