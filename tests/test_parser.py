@@ -11,9 +11,9 @@ from pypdf import PdfWriter
 from src.vision.parser import FinancialDocumentParser
 
 @pytest.fixture
-def sample_pdf_path(temp_path: Path) -> str:
+def sample_pdf_path(tmp_path: Path) -> str:
     """Generates a minimal valid PDF file dynamically for unit testing"""
-    pdf_file = temp_path / "sample_statement.pdf"
+    pdf_file = tmp_path / "sample_statement.pdf"
     writer = PdfWriter()
     writer.add_blank_page(width=612, height=792)
     with open(pdf_file, "wb") as f:

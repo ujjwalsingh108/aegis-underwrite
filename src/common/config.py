@@ -17,7 +17,7 @@ class AppSettings(BaseSettings):
     modal_volume_name: str = "aegis-underwrite-volume"
 
     # Compute & Hardware Selection (Set USE_GPU=True once card is linked)
-    use_gpu: bool = False
+    use_gpu: bool = True
     gpu_type: str = "A10G"
     cpu_cores: float = 2.0
     memory_mb: int = 4096
