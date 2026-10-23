@@ -84,7 +84,7 @@ class SyntheticUnderwritingDatasetGenerator:
             f"Applicant ID: {financials.applicant_id}\n"
             f"Stated Monthly Income: ${financials.stated_monthly_income:,.2f}\n"
             f"Verified Monthly Income: ${metrics.verified_monthly_income:,.2f}\n"
-            f"Total Monthly Debt Obligations: ${financials.total_monthly_debt:,.2f}\n",
+            f"Total Monthly Debt Obligations: ${financials.total_monthly_debt:,.2f}\n"
             f"Liquid Reserves: ${financials.liquid_assets:,.2f}\n"
             f"Income Variance: ${metrics.income_variance_pct}%\n"
             f"Anomaly Flags: {metrics.anomaly_flags}"
@@ -92,7 +92,7 @@ class SyntheticUnderwritingDatasetGenerator:
 
         return UnderwritingTrainingSample(
             instruction=instruction,
-            input_context=input_context, # type: ignore
+            input_context=input_context,
             expected_memo_json=memo.model_dump_json()
         )
 
