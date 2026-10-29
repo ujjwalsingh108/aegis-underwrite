@@ -48,11 +48,15 @@ class UnderwritingLoRATrainer:
         )
 
     def prepare_peft_model(self):
+
+        # Use torch.bfloat16 or float16 on GPU, float32 on CPU
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+
         model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
-            torch_dtype=torch.float32,
-            device_map="cuda",
-            low_gpu_mem_usage=True
+            dtype=model_dtype,
+            device_map=device,
         )
         lora_config = self.get_lora_config()
         peft_model = get_peft_model(model, lora_config)
