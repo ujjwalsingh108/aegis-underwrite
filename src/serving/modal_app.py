@@ -17,29 +17,43 @@ from src.common.config import settings
 app_volume = modal.Volume.from_name(settings.modal_volume_name, create_if_missing=True)
 
 # 2. CPU runtime image (No CUDA required, builds quickly, completely free)
-cpu_image = modal.Image.debian_slim(python_version="3.11").pip_install(
-    "torch>=2.2.0",
-    "transformers>=4.44.0",
-    "accelerate>=0.33.0",
-    "pydantic>=2.7.0",
-    "pydantic-settings>=2.2.0",
-    "pypdf>=4.2.0",
-    "pdfplumber>=0.11.0",
-    "huggingface_hub>=0.24.0",
-).add_local_python_source("src")
+cpu_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install(
+        "torch>=2.2.0",
+        "transformers>=4.44.0",
+        "accelerate>=0.33.0",
+        "peft>=0.10.0",
+        "datasets>=2.18.0",
+        "pydantic>=2.7.0",
+        "pydantic-settings>=2.2.0",
+        "pypdf>=4.2.0",
+        "pdfplumber>=0.11.0",
+        "huggingface_hub>=0.24.0",
+        "faker>=24.0.0",
+    )
+    .add_local_python_source("src")
+)
 
 # GPU vLLM image (Used when settings.use_gpu is True)
-gpu_image = modal.Image.debian_slim(python_version="3.11").pip_install(
-    "vllm>=0.6.0",
-    "torch>=2.4.0",
-    "transformers>=4.44.0",
-    "accelerate>=0.33.0",
-    "pydantic>=2.7.0",
-    "pydantic-settings>=2.2.0",
-    "pypdf>=4.2.0",
-    "pdfplumber>=0.11.0",
-    "huggingface_hub>=0.24.0",
-).add_local_python_source("src")
+gpu_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install(
+        "vllm>=0.6.0",
+        "torch>=2.4.0",
+        "transformers>=4.44.0",
+        "accelerate>=0.33.0",
+        "peft>=0.10.0",
+        "datasets>=2.18.0",
+        "pydantic>=2.7.0",
+        "pydantic-settings>=2.2.0",
+        "pypdf>=4.2.0",
+        "pdfplumber>=0.11.0",
+        "huggingface_hub>=0.24.0",
+        "faker>=24.0.0",
+    )
+    .add_local_python_source("src")
+)
 
 # 3. Instantiate the Modal App
 app = modal.App(name=settings.app_name)
