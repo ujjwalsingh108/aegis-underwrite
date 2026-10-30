@@ -31,8 +31,10 @@ cpu_image = (
         "pdfplumber>=0.11.0",
         "huggingface_hub>=0.24.0",
         "faker>=24.0.0",
-        "gradio>=4.40.0",   # <--- Added for frontend
-        "requests>=2.31.0"  # <--- Added for HTTP calls to FastAPI,
+        "gradio==4.44.1",
+        "fastapi==0.112.2",   # <--- Added to fix Jinja2 hashing bug
+        "starlette==0.38.2",  # <--- Added to fix Jinja2 hashing bug
+        "requests>=2.31.0"
     )
     .add_local_python_source("src")
 )
@@ -61,14 +63,12 @@ gpu_image = (
 # 3. Instantiate the Modal App
 app = modal.App(name=settings.app_name)
 
-@app.function(
-    image=cpu_image,
-    keep_warm=1, # Keep one CPU container alive for instant HTTP routing # type: ignore
-)
-
+@app.function(image=cpu_image)
 @modal.asgi_app()
-def api():
-    """Mounts the FastAPI gateway to a public serverless endpoint."""
-    from src.api.gateway import app as fastapi_app
-    return fastapi_app
+def ui():
+    """Mounts the Gradio UI to a public serverless endpoint."""
+    from src.ui.dashboard import demo
+    import gradio as gr
+    # Gradio provides a helper to convert its Blocks app into an ASGI-compatible app
+    return gr.routes.App.create_app(demo)
 

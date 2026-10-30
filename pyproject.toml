@@ -44,6 +44,10 @@ dependencies = [
     "python-dotenv>=1.0.1",
     "pyyaml>=6.0.1",
     "rich>=13.7.0",
+    "requests>=2.31.0",
+
+    # UI
+    "gradio>=4.40.0"
 ]
 
 [project.optional-dependencies]
