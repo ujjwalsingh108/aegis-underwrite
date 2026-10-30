@@ -21,7 +21,7 @@ cpu_image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
         "torch>=2.2.0",
-        "transformers>=4.44.0",
+        "transformers>=4.48.2,<4.54.0",
         "accelerate>=0.33.0",
         "peft>=0.10.0",
         "datasets>=2.18.0",
@@ -39,9 +39,10 @@ cpu_image = (
 gpu_image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
-        "vllm>=0.6.0",
+        "vllm",         
+        "outlines", # <--- Add outlines explicitly for JSON constraint mapping
         "torch>=2.4.0",
-        "transformers>=4.44.0",
+        "transformers>=4.48.2,<4.54.0",
         "accelerate>=0.33.0",
         "peft>=0.10.0",
         "datasets>=2.18.0",
