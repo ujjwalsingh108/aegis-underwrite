@@ -58,3 +58,15 @@ gpu_image = (
 
 # 3. Instantiate the Modal App
 app = modal.App(name=settings.app_name)
+
+@app.function(
+    image=cpu_image,
+    keep_warm=1, # Keep one CPU container alive for instant HTTP routing # type: ignore
+)
+
+@modal.asgi_app()
+def api():
+    """Mounts the FastAPI gateway to a public serverless endpoint."""
+    from src.api.gateway import app as fastapi_app
+    return fastapi_app
+
