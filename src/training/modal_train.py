@@ -28,6 +28,7 @@ active_gpu = settings.gpu_type if settings.use_gpu else None
     cpu=settings.cpu_cores,
     memory=settings.memory_mb,
     volumes={"/vol": app_volume},
+    secrets=[modal.Secret.from_name("underwriting_hf_token")],
     timeout=1800, # 30-minute ceiling for training
 )
 
