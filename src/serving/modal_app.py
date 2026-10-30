@@ -63,12 +63,24 @@ gpu_image = (
 # 3. Instantiate the Modal App
 app = modal.App(name=settings.app_name)
 
-@app.function(image=cpu_image)
+@app.function(
+    image=cpu_image,
+    min_containers=1,
+    timeout=600,       # <--- Add this to the API function
+)
+@modal.asgi_app()
+def api():
+    from src.api.gateway import app as fastapi_app
+    return fastapi_app
+
+
+@app.function(
+    image=cpu_image,
+    timeout=600,       # <--- Add this to the UI function
+)
 @modal.asgi_app()
 def ui():
-    """Mounts the Gradio UI to a public serverless endpoint."""
     from src.ui.dashboard import demo
     import gradio as gr
-    # Gradio provides a helper to convert its Blocks app into an ASGI-compatible app
     return gr.routes.App.create_app(demo)
 

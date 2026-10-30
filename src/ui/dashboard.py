@@ -25,7 +25,7 @@ def analyze_risk(applicant_id, stated_inc, verified_inc, debt, reserves, flags_t
     }
     
     try:
-        response = requests.post(API_URL, json=payload, timeout=300)
+        response = requests.post(API_URL, json=payload, timeout=600)
         response.raise_for_status()
         data = response.json()
         
