@@ -31,6 +31,8 @@ cpu_image = (
         "pdfplumber>=0.11.0",
         "huggingface_hub>=0.24.0",
         "faker>=24.0.0",
+        "gradio>=4.40.0",   # <--- Added for frontend
+        "requests>=2.31.0"  # <--- Added for HTTP calls to FastAPI,
     )
     .add_local_python_source("src")
 )
