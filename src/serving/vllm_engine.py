@@ -111,7 +111,7 @@ class UnderwritingLLMEngine:
             import uuid
             from vllm import SamplingParams
             from vllm.lora.request import LoRARequest
-            from vllm.sampling_params import GuidedDecodingParams   # type: ignore
+            from vllm.sampling_params import GuidedDecodingParams # type: ignore
 
             # Force the LLM to strictly follow the Pydantic schema
             schema_str = json.dumps(UnderwritingMemo.model_json_schema())
@@ -120,7 +120,7 @@ class UnderwritingLLMEngine:
             sampling_params = SamplingParams(
                 temperature=temperature, 
                 max_tokens=max_tokens,
-                guided_decoding=guided_params  # Inject the constraints here    # type: ignore
+                guided_decoding=guided_params  # Inject the constraints here # type: ignore
             )
 
             lora_request = (
@@ -220,6 +220,16 @@ class UnderwritingLLMEngine:
             raise ValueError(
                 f"Model output failed UnderwritingMemo schema validation: {e}\nRaw output:\n{full_output}"
             )
+
+    @modal.exit()
+    def cleanup_modal(self):
+        """Gracefully shuts down the vLLM engine before the Modal container exits."""
+        if settings.use_gpu and hasattr(self, "engine"):
+            try:
+                if hasattr(self.engine, "shutdown"):
+                    self.engine.shutdown()  # Synchronous call
+            except Exception as e:
+                print(f"Notice during shutdown: {e}")
 
 @app.local_entrypoint()
 def test_stream():
