@@ -3,21 +3,21 @@ This module sets up supervised fine-tuning with PEFT/LoRA so the Qwen model lear
 to output structured, policy-compliant underwriting memos instead of generic conversational
 prose.
 
-This script prepares training arguments, configures LoRA target modules for attention
-projections, formats conversational training pairs, and runs lightweight training on 
-CPU or GPU.
+This script runs strictly on GPU, utilizing FlashAttention-2, bfloat16 precision, 
+and gradient checkpointing to maximize training throughput and memory efficiency.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Any
 import torch
+from datasets import load_dataset
 from peft import LoraConfig, get_peft_model, TaskType
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     TrainingArguments,
     Trainer,
-    DataCollatorForSeq2Seq
+    DataCollatorForLanguageModeling
 )
 from src.common.config import settings
 
@@ -29,42 +29,137 @@ class UnderwritingTrainingSample:
     expected_memo_json: str
 
 class UnderwritingLoRATrainer:
+    """Production LoRA Trainer executing strictly on GPU hardware."""
+    
     def __init__(self):
         self.model_name = settings.base_model_name
         self.output_dir = settings.lora_output_dir
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name) # decoding
+        
+        # Initialize tokenizer with correct padding
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.tokenizer.padding_side = "right" # Crucial for causal LM training
 
-    """This function returns a LoRA configuration that tells PEFT how to inject trainable adapters into a pretrained LLM."""
     def get_lora_config(self) -> LoraConfig:
+        """
+        Configures PEFT adapters. 
+        Targeting 'all-linear' modules instead of just q_proj/v_proj ensures 
+        the model learns complex JSON schema reasoning, not just attention routing.
+        """
         return LoraConfig(
             task_type=TaskType.CAUSAL_LM,
-            r=8,
-            lora_alpha=16,
+            r=16,               # Increased rank for complex JSON generation
+            lora_alpha=32,      # Standard scaling (alpha = 2 * r)
             lora_dropout=0.05,
-            target_modules=["q_proj", "v_proj"],
+            target_modules="all-linear", # Targets q, k, v, o, gate, up, down projections
             bias="none"
         )
 
     def prepare_peft_model(self):
-
-        # Use torch.bfloat16 or float16 on GPU, float32 on CPU
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+        """Loads the base model in strict GPU-only mode with FlashAttention-2."""
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA GPU is required for production training. CPU fallback disabled.")
 
         model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
-            dtype=model_dtype,
-            device_map=device,
+            torch_dtype=torch.bfloat16,  # Modern Ampere/Hopper mixed precision
+            device_map="cuda",           # Strict GPU enforcement
+            attn_implementation="flash_attention_2", # Eliminates memory fragmentation during training
         )
+        
+        # Enable gradient checkpointing to save VRAM at the cost of slight compute overhead
+        model.gradient_checkpointing_enable()
+        
         lora_config = self.get_lora_config()
         peft_model = get_peft_model(model, lora_config)
+        peft_model.print_trainable_parameters()
         return peft_model
 
-    def format_prompt(self, sample: UnderwritingTrainingSample) -> str:
+    def format_prompt(self, sample: Dict[str, Any]) -> str:
+        """Formats the input into Qwen's native ChatML structure."""
         return (
-            f"<|im_start|>system\n{sample.instruction}<|im_end|>\n"
-            f"<|im_start|>user\n{sample.input_context}<|im_end|>\n"
-            f"<|im_start|>assistant\n{sample.expected_memo_json}<|im_end|>"
+            f"<|im_start|>system\n{sample['instruction']}<|im_end|>\n"
+            f"<|im_start|>user\n{sample['input_context']}<|im_end|>\n"
+            f"<|im_start|>assistant\n{sample['expected_memo_json']}<|im_end|>"
         )
+
+    def tokenize_function(self, examples: Dict[str, List[Any]]) -> Dict[str, torch.Tensor]:
+        """Maps over the dataset, formats the prompt, and tokenizes it."""
+        prompts = [
+            self.format_prompt({
+                "instruction": inst, 
+                "input_context": ctx, 
+                "expected_memo_json": memo
+            }) 
+            for inst, ctx, memo in zip(
+                examples['instruction'], 
+                examples['input_context'], 
+                examples['expected_memo_json']
+            )
+        ]
+        
+        return self.tokenizer(
+            prompts,
+            truncation=True,
+            max_length=2048,
+            padding="max_length",
+        )
+
+    def train(self, train_path: str, eval_path: str):
+        """Executes the LoRA training loop and saves the final adapter."""
+        peft_model = self.prepare_peft_model()
+        
+        # Load datasets generated by the Teacher LLM
+        dataset = load_dataset(
+            "json", 
+            data_files={"train": train_path, "eval": eval_path}
+        )
+        
+        tokenized_datasets = dataset.map(
+            self.tokenize_function, 
+            batched=True, 
+            remove_columns=["instruction", "input_context", "expected_memo_json"]
+        )
+
+        # Causal LM collator shifts inputs for next-token prediction
+        data_collator = DataCollatorForLanguageModeling(
+            tokenizer=self.tokenizer, 
+            mlm=False
+        )
+
+        training_args = TrainingArguments(
+            output_dir=self.output_dir,
+            per_device_train_batch_size=4,
+            per_device_eval_batch_size=4,
+            gradient_accumulation_steps=4,
+            warmup_ratio=0.03,
+            num_train_epochs=3,
+            learning_rate=2e-4,
+            fp16=False,
+            bf16=True,                  # Requires A10G/A100 GPUs
+            logging_steps=10,
+            evaluation_strategy="steps",
+            eval_steps=50,
+            save_strategy="steps",
+            save_steps=50,
+            load_best_model_at_end=True,
+            lr_scheduler_type="cosine",
+            optim="adamw_torch_fused",  # Highly optimized optimizer for Ampere GPUs
+            report_to="none"            # Update to "wandb" if you add Weights & Biases
+        )
+
+        trainer = Trainer(
+            model=peft_model,
+            args=training_args,
+            train_dataset=tokenized_datasets["train"],
+            eval_dataset=tokenized_datasets["eval"],
+            data_collator=data_collator,
+        )
+
+        print("Starting LoRA Fine-Tuning...")
+        trainer.train()
+        
+        print(f"Training complete. Saving adapter to {self.output_dir}")
+        trainer.model.save_pretrained(self.output_dir)
+        self.tokenizer.save_pretrained(self.output_dir)
