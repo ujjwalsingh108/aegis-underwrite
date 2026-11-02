@@ -51,5 +51,5 @@ app = modal.App(name=settings.app_name)
 )
 @modal.asgi_app()
 def api():
-    from src.api.gateway import app as fastapi_app
+    from src.api.main import app as fastapi_app
     return fastapi_app
