@@ -4,28 +4,26 @@
 Architectural Intent - By decoupling quantitative calculation from language
 models, the pipeline guarantees repeatable, non-hallucinatory ratio outputs.
 
-The calcualations handle edge cases deterministically:
+The calculations handle edge cases deterministically:
 
-    * Division by zero or negative earnings in Debt-to-Income(DTI) calculations return infinity rather than an 
-    unhandled crash.
+    * Division by zero or negative earnings in Debt-to-Income (DTI) or Loan-to-Value (LTV) 
+      calculations return infinity rather than an unhandled crash.
 
-    * Zero annual debt service in Debt Service Coverage Ratio (DSCR) calculations cleanly signals that the applicant
-    carries no required debt service.
+    * Zero annual debt service in Debt Service Coverage Ratio (DSCR) calculations cleanly 
+      signals that the applicant carries no required debt service.
 
     * Zero burn rate or zero recurring debt in liquidity runway checks handles infinite coverage gracefully. 
-
 """
 
 from typing import Any, Dict, List, Optional
 from src.common.config import settings
-from src.common.schemas import ApplicantFinancials
+from src.common.schemas import ApplicantProfile
 
 def calculate_dti(monthly_debt: float, monthly_income: float) -> float:
     """
     Computes Debt-to-Income ratio.
     Formula: total monthly debt obligations / gross monthly income
     """
-
     if monthly_income <= 0:
         return float("inf")
     
@@ -40,7 +38,6 @@ def calculate_dscr(
     Formula: annual net operating income / annual debt service obligations.
     Returns None if either component is missing.
     """
-
     if net_operating_income is None or total_debt_service is None:
         return None
     elif total_debt_service <= 0:
@@ -56,35 +53,54 @@ def calculate_liquidity_runway(
     Computes liquidity runway in months supported by cash reserves.
     Formula: accessible liquid assets / recurring monthly obligations.
     """
-
     if monthly_obligations <= 0:
         return float("inf") if liquid_assets > 0 else 0.0
 
     return round(liquid_assets / monthly_obligations, 2)
 
-def evaluate_ratios(financials: ApplicantFinancials) -> Dict[str, Any]:
+def calculate_ltv(
+        loan_amount: float,
+        collateral_value: Optional[float]
+) -> Optional[float]:
     """
-    Computes all standard underwriting ratios and compares them
-    against enterprise policy limits configured in settings.
+    Computes Loan-to-Value ratio if collateral is provided.
+    Formula: requested loan amount / stated collateral value
     """
+    if collateral_value is None:
+        return None
+    if collateral_value <= 0:
+        return float("inf")
+    
+    return round(loan_amount / collateral_value, 4)
 
+def evaluate_ratios(profile: ApplicantProfile) -> Dict[str, Any]:
+    """
+    Computes all standard underwriting ratios based on the multimodal ApplicantProfile 
+    and compares them against enterprise policy limits configured in settings.
+    """
     dti = calculate_dti(
-        monthly_debt=financials.total_monthly_debt,
-        monthly_income=financials.stated_monthly_income
+        monthly_debt=profile.total_monthly_debt,
+        monthly_income=profile.stated_monthly_income
     )
 
     dscr = calculate_dscr(
-        net_operating_income=financials.annual_operating_income,
-        total_debt_service=financials.annual_debt_service
+        net_operating_income=profile.annual_operating_income,
+        total_debt_service=profile.annual_debt_service
     )
 
     liquidity_runway = calculate_liquidity_runway(
-        liquid_assets=financials.liquid_assets,
-        monthly_obligations=financials.total_monthly_debt
+        liquid_assets=profile.liquid_assets,
+        monthly_obligations=profile.total_monthly_debt
+    )
+    
+    ltv = calculate_ltv(
+        loan_amount=profile.requested_loan_amount,
+        collateral_value=profile.stated_collateral_value
     )
 
     breached_policies: List[str] = []
 
+    # Apply Policy Thresholds
     if dti > settings.max_dti_threshold:
         breached_policies.append(
             f"DTI {dti:.2%} exceeds maximum policy threshold {settings.max_dti_threshold:.2%}"
@@ -92,7 +108,7 @@ def evaluate_ratios(financials: ApplicantFinancials) -> Dict[str, Any]:
 
     if dscr is not None and dscr < settings.min_dscr_threshold:
         breached_policies.append(
-            f"DSCR {dscr:.2f} is below minimum policy threshold {settings.min_dscr_threshold:.2%}"
+            f"DSCR {dscr:.2f} is below minimum policy threshold {settings.min_dscr_threshold:.2f}x"
         )
 
     if liquidity_runway < settings.min_liquidity_months:
@@ -106,6 +122,7 @@ def evaluate_ratios(financials: ApplicantFinancials) -> Dict[str, Any]:
         "status": preliminary_status,
         "calculated_dti": dti,
         "calculated_dscr": dscr,
+        "calculated_ltv": ltv,
         "liquidity_runway_months": liquidity_runway,
         "breached_policies": breached_policies
     }
