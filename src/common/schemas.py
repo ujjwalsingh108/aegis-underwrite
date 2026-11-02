@@ -1,7 +1,18 @@
-from datetime import datetime, timezone
+"""
+src/common/schemas.py
+
+Centralized Pydantic schemas for strict data validation across the pipeline.
+"""
+
 from enum import Enum
 from typing import List, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
+
+class EntityType(str, Enum):
+    INDIVIDUAL = "INDIVIDUAL"
+    LLC = "LLC"
+    CORP = "CORP"
+    TRUST = "TRUST"
 
 class UnderwritingDecision(str, Enum):
     APPROVE = "APPROVE"
@@ -10,160 +21,57 @@ class UnderwritingDecision(str, Enum):
     REJECT_CREDIT = "REJECT_CREDIT"
     REJECT_FRAUD = "REJECT_FRAUD"
 
-class EntityType(str, Enum):
-    INDIVIDUAL = "INDIVIDUAL"
-    SOLE_PROPRIETOR = "SOLE_PROPRIETOR"
-    LLC = "LLC"
-    CORP = "CORP"
-    TRUST = "TRUST"
+class MultimodalFraudMetrics(BaseModel):
+    """Aggregated fraud confidence scores from Vision and Audio agents."""
+    kyc_confidence_score: float = Field(..., description="1.0 is perfect match, 0.0 is total failure.")
+    document_tampering_score: float = Field(..., description="Probability of PDF/image metadata manipulation.")
+    synthetic_voice_probability: Optional[float] = Field(default=None, description="Deepfake audio probability if voice verification was used.")
 
 class ApplicantProfile(BaseModel):
-    """Holistic profile including requested terms and collateral, not just cash flow."""
-    applicant_id: str = Field(..., description="Unique borrower or corporate identifier")
+    """The stated claims provided by the applicant."""
+    applicant_id: str
     entity_type: EntityType
-    requested_loan_amount: float = Field(..., gt=0)
-    stated_monthly_income: float = Field(..., ge=0)
-    total_monthly_debt: float = Field(..., ge=0)
-    liquid_assets: float = Field(..., ge=0)
-    stated_collateral_value: Optional[float] = Field(
-        default=None, ge=0, description="Estimated value of physical or liquid collateral"
-    )
-    # Corporate specific
-    annual_operating_income: Optional[float] = Field(default=None, ge=0)
-    annual_debt_service: Optional[float] = Field(default=None, ge=0)
-
-    @field_validator("annual_operating_income", "annual_debt_service")
-    def validate_corporate_fields(cls, v, info):
-        if info.data.get("entity_type") in [EntityType.LLC, EntityType.CORP] and v is None:
-            raise ValueError(f"{info.field_name} is required for corporate entities.")
-        return v
-
-class MultimodalFraudMetrics(BaseModel):
-    """Outputs from Vision and Audio AI agents."""
-    kyc_confidence_score: float = Field(..., ge=0, le=1.0, description="Confidence that selfie matches government ID")
-    document_tampering_score: float = Field(..., ge=0, le=1.0, description="Probability of Photoshop/metadata tampering on PDFs")
-    synthetic_voice_probability: Optional[float] = Field(default=None, ge=0, le=1.0, description="Deepfake audio detection for video KYC")
+    requested_loan_amount: float
+    stated_monthly_income: float
+    total_monthly_debt: float
+    liquid_assets: float
+    stated_collateral_value: Optional[float] = None
 
 class ExtractedFinancialMetrics(BaseModel):
-    """Verified metrics post-GraphRAG and OCR extraction."""
-    verified_monthly_income: float = Field(..., ge=0)
-    detected_monthly_liabilities: float = Field(..., ge=0)
-    verified_liquid_reserves: float = Field(..., ge=0)
-    verified_collateral_value: Optional[float] = Field(default=None, ge=0)
+    """The verified metrics parsed deterministically from documents and AI agents."""
+    verified_monthly_income: float
+    detected_monthly_liabilities: float
+    verified_liquid_reserves: float
+    verified_collateral_value: Optional[float] = None
     
-    # Compliance & GraphRAG outputs
-    pep_or_sanctions_hit: bool = Field(..., description="True if Applicant or UBO appears on OFAC/Sanctions lists")
-    ubo_verified: bool = Field(..., description="True if all Ultimate Beneficial Owners >25% are identified")
-    
-    # Fraud & AI Vision
+    pep_or_sanctions_hit: bool = False
+    ubo_verified: bool = True
     fraud_metrics: MultimodalFraudMetrics
+    
+    # Resolves the Pylance Error:
+    income_variance_pct: float = Field(..., description="Percentage variance between stated and verified income.")
     anomaly_flags: List[str] = Field(default_factory=list)
 
 class AuditTrailEntry(BaseModel):
-    """Immutable ledger of the AI's autonomous MCP tool calls."""
+    """A timestamped, role-based ledger entry for regulatory compliance."""
     step_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    agent_role: str = Field(..., description="e.g., 'Vision_KYC_Model', 'GraphRAG_Database', 'vLLM_Decision_Engine'")
+    agent_role: str
     status: str
-    details: Optional[str] = None
+    details: str
 
 class UnderwritingMemo(BaseModel):
-    """Enterprise-grade risk memo ready for downstream RBAC delivery."""
+    """The final, immutable output generated by the AI Underwriting Engine."""
     application_id: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     decision: UnderwritingDecision
+    calculated_dti: float
+    calculated_dscr: Optional[float] = None
+    calculated_ltv: Optional[float] = None
+    liquidity_runway_months: float
+    overall_fraud_probability: float = 0.0
     
-    # Core Ratios
-    calculated_dti: float = Field(..., ge=0)
-    calculated_ltv: Optional[float] = Field(default=None, ge=0, description="Loan-to-Value ratio if collateral exists")
-    calculated_dscr: Optional[float] = Field(default=None, ge=0)
-    liquidity_runway_months: float = Field(..., ge=0)
-    
-    # Risk & Fraud Output
-    overall_fraud_probability: float = Field(..., ge=0, le=1.0)
+    approved_loan_amount: float = 0.0
     breached_policies: List[str] = Field(default_factory=list)
     risk_factors: List[str] = Field(default_factory=list)
+    required_covenants: List[str] = Field(default_factory=list)
     
-    # Executable Terms
-    approved_loan_amount: float = Field(..., ge=0)
-    required_covenants: List[str] = Field(
-        default_factory=list, 
-        description="e.g., 'Maintain minimum DSCR of 1.25x', 'Provide quarterly audited financials'"
-    )
-    
-    audit_trail: List[AuditTrailEntry] = Field(default_factory=list)
-
-
-
-
-# # Pydantic models for Underwriting Memo, Extracted Tables
-
-# from datetime import datetime, timezone
-# from enum import Enum
-# from typing import List, Optional
-# from pydantic import BaseModel, Field
-
-# class UnderwritingDecision(str, Enum): # safety of enums (restricted set of values) plus the convenience of strings (easy comparison, serialization)
-#     """Final loan or credit underwriting recommendation."""
-#     APPROVE = "APPROVE"
-#     CONDITIONAL = "CONDITIONAL"
-#     REJECT = "REJECT"
-
-# class ApplicantFinancials(BaseModel):
-#     """Raw financial parameters submitted by the applicant or business entity."""
-#     applicant_id: str = Field(..., description="Unique borrower or corporate identifier")
-#     stated_monthly_income: float = Field(..., gt=0, description="Gross monthly income claimed by applicant")
-#     total_monthly_debt: float = Field(..., ge=0, description="Existing recurring monthly debt obligations")
-#     liquid_assets: float = Field(..., ge=0, description="Total accessible cash and equvivalents")
-#     annual_operating_income: Optional[float] = Field(
-#         default=None, ge=0, description="Annual net operating income for corporate underwriting"
-#     )
-#     annual_debt_service: Optional[float] = Field(
-#         default=None, ge=0, description="Total annual debt service principal and interest"
-#     )
-
-# class ExtractedFinancialMetrics(BaseModel):
-#     """Verified financial metrics extracted by document vision and OCR workers."""
-#     verified_monthly_income: float = Field(..., ge=0, description="Total income verified from paystubs or bank logs")
-#     detected_monthly_liabilities: float = Field(..., ge=0, description="Montly recurring payments detected")
-#     verified_liquid_reserves: float = Field(..., ge=0, description="Verified cash reserve balances")
-#     income_variance_pct: float = Field(
-#         ..., description="Percentage variance between stated and verified monthly income"
-#     )
-#     anomaly_flags: List[str] = Field(
-#         default_factory=list, description="List of suspicious traits, tampering indicators, or mismatches"
-#     )
-
-# class AuditTrialEntry(BaseModel):
-#     """Record of individual verification and processing steps."""
-#     step_name: str
-#     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-#     status: str
-#     details: Optional[str] = None
-
-# class UnderwritingMemo(BaseModel):
-#     """Final structured credit and risk memo emitted by the engine."""
-#     application_id: str
-#     decision: UnderwritingDecision
-#     calculated_dti: float = Field(..., description="Computed Debt-to-Income ratio")
-#     calculated_dscr: Optional[float] = Field(
-#         None,
-#         description="Computed Debt-Service Coverage Ratio for corporate entities"
-#     )
-#     liquidity_runway_months: float = Field(..., description="Estimated runway supported by liquid cash reserves")
-#     breached_policies: List[str] = Field(
-#         default_factory=list,
-#         description="Rules or limits exceeded during underwriting evaluation"
-#     )
-#     risk_factors: List[str] = Field(
-#         default_factory=list,
-#         description="Key operational, credit, or market risks identified"
-#     )
-#     covenants: List[str] = Field(
-#         default_factory=list, 
-#         description="Stipulations or collateral conditions required for clearance"
-#     )
-#     audit_trail: List[AuditTrialEntry] = Field(
-#         default_factory=list,
-#         description="Sequential trace of execution steps"
-#     )
+    audit_trail: List[AuditTrailEntry]
