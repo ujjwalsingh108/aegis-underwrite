@@ -50,6 +50,7 @@ class AppSettings(BaseSettings):
     min_dscr_threshold: float = 1.25
     min_liquidity_months: float = 6.0
     max_fraud_probability: float = 0.15
+    max_ltv_threshold: float = 0.80  # Maximum 80% Loan-to-Value
 
     # Configuration for loading environment variables
     model_config = SettingsConfigDict(

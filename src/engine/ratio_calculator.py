@@ -117,9 +117,16 @@ def evaluate_ratios(profile: ApplicantProfile) -> Dict[str, Any]:
         collateral_value=profile.stated_collateral_value
     )
 
+    # Liquidity Guardrail
     if liquidity_runway < settings.min_liquidity_months:
         breached_policies.append(
             f"Liquidity runway {liquidity_runway:.1f} months is below required reserve of {settings.min_liquidity_months:.1f} months"
+        )
+
+    # LTV Policy Guardrail
+    if ltv is not None and ltv > settings.max_ltv_threshold:
+        breached_policies.append(
+            f"LTV {ltv:.2%} exceeds maximum secured policy threshold of {settings.max_ltv_threshold:.2%}"
         )
 
     preliminary_status = "PASS" if not breached_policies else "FAIL"
