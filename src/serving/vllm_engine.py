@@ -97,7 +97,7 @@ class UnderwritingLLMEngine:
     async def generate_stream(
         self,
         prompt: str,
-        temperature: float = 0.1,
+        temperature: float = 0.1, # the lower the temprature, the deterministic the output
         max_tokens: int = 1024,
     ) -> AsyncGenerator[str, None]:
         """Exposed Modal method for external streaming consumption."""
