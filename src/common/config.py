@@ -34,8 +34,8 @@ class AppSettings(BaseSettings):
         description="Massive open-weights model used strictly for Evol-Instruct synthetic data generation"
     )
     vision_model_name: str = Field(
-        default="Qwen/Qwen2-VL-7B-Instruct", 
-        description="Vision-Language model for KYC document tampering and video extraction"
+            default="Qwen/Qwen2-VL-2B-Instruct", 
+            description="Vision-Language model for KYC document tampering and video extraction"
     )
     lora_output_dir: str = "/vol/lora_adapters"
 
