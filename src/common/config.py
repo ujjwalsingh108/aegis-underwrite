@@ -11,6 +11,12 @@ class AppSettings(BaseSettings):
     modal_volume_name: str = "aegis-underwrite-volume"
     environment: str = Field(default="development", description="Current deployment environment (dev, staging, prod)")
 
+    # Security & API Keys
+    master_api_key: str = Field(
+        default="dev-secret-key-change-in-prod", 
+        description="Master API key for authenticating FastAPI requests"
+    )
+
     # Frontend Decoupling & Security
     allowed_origins: List[str] = Field(
         default=["http://localhost:3000"], 
