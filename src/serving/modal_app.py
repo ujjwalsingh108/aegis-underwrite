@@ -7,11 +7,12 @@ accelerated serverless workloads. All ML inference is strictly constrained to GP
 """
 
 import modal
+from modal import asgi_app
 from src.common.config import settings
 
 app_volume = modal.Volume.from_name(settings.modal_volume_name, create_if_missing=True)
 
-# 1. Ultra-Lean Image for Web Gateways (Gradio completely removed)
+# 1. Ultra-Lean Image for Web Gateways
 gateway_image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
@@ -19,7 +20,8 @@ gateway_image = (
         "starlette==0.38.2",
         "pydantic>=2.7.0",
         "pydantic-settings>=2.2.0",
-        "requests>=2.31.0"
+        "requests>=2.31.0",
+        "python-multipart==0.0.9"  # REQUIRED for FastAPI UploadFile (PDFs)
     )
     .add_local_python_source("src")
 )
@@ -45,11 +47,11 @@ gpu_image = (
 app = modal.App(name=settings.app_name)
 
 @app.function(
-    image=gateway_image,           
-    min_containers=1,              # Keep gateway warm to serve Vercel requests instantly
-    timeout=600,
+    image=gateway_image,  # Explicitly assign the gateway image
+    volumes={settings.lora_output_dir: app_volume},  # Fix NameError: use app_volume
+    secrets=[modal.Secret.from_name("aegis-api-secret")]
 )
-@modal.asgi_app()
-def api():
+@asgi_app()
+def web_endpoint():
     from src.api.main import app as fastapi_app
     return fastapi_app
