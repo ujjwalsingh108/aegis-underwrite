@@ -9,7 +9,7 @@ requirements during CI/CD test runs.
 import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from src.training.dataset_generator import generate_and_split_dataset
+from src.training.dataset_generator_paid import generate_and_split_dataset
 from src.common.schemas import UnderwritingDecision
 
 # Mock output matching the Teacher LLM's highly complex generated schema
