@@ -1,5 +1,22 @@
+import sys
 import pytest
+from unittest.mock import MagicMock
 from src.common.schemas import ApplicantProfile, EntityType
+
+
+# --- Windows Compatibility Mock ---
+# vLLM requires uvloop, which is Linux-only and fails on Windows.
+# This intercepts the imports globally so pytest can run locally.
+sys.modules['uvloop'] = MagicMock()
+vllm_mock = MagicMock()
+sys.modules['vllm'] = vllm_mock
+sys.modules['vllm.lora'] = vllm_mock
+sys.modules['vllm.lora.request'] = vllm_mock
+sys.modules['vllm.sampling_params'] = vllm_mock
+# ----------------------------------
+
+import pytest
+from src.common.schemas import ApplicantProfile
 
 @pytest.fixture
 def valid_individual_profile():
