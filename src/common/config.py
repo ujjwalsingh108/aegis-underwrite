@@ -35,10 +35,6 @@ class AppSettings(BaseSettings):
 
     # Agentic Models & Modalities
     base_model_name: str = "Qwen/Qwen2.5-1.5B-Instruct"
-    teacher_model_name: str = Field(
-        default="meta-llama/Llama-3.1-405B-Instruct", 
-        description="Massive open-weights model used strictly for Evol-Instruct synthetic data generation"
-    )
     vision_model_name: str = Field(
             default="Qwen/Qwen2-VL-2B-Instruct", 
             description="Vision-Language model for KYC document tampering and video extraction"
