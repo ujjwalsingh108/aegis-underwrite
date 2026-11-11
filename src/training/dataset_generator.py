@@ -1,12 +1,4 @@
-"""
-src/training/dataset_generator.py
-
-Modern Evol-Instruct Dataset Generation using a Teacher LLM.
-This script uses a larger open-weights model to generate diverse financial 
-edge-cases, processes them through our deterministic pipeline, and saves 
-the resulting instruction pairs to the Modal network volume for LoRA training.
-"""
-
+import os
 import json
 import random
 from pathlib import Path
@@ -17,47 +9,36 @@ from src.common.config import settings
 from src.common.schemas import (
     ApplicantProfile,
     ExtractedFinancialMetrics,
-    MultimodalFraudMetrics,
-    EntityType
 )
 from src.engine.pipeline import UnderwritingPipeline
 from src.training.lora_trainer import UnderwritingTrainingSample
-from src.serving.modal_app import app, app_volume, gpu_image
+from src.serving.modal_app import app, app_volume
 
-# 1. Define the Teacher LLM Engine on Modal
+# We removed the GPU image. We only need a lightweight CPU container for API calls.
+api_image = modal.Image.debian_slim(python_version="3.11").pip_install("openai", "pydantic")
+
 @app.cls(
-    image=gpu_image,
-    gpu=settings.gpu_type,  # You may need A100s/H100s for massive teacher models
-    volumes={"/vol": app_volume},
-    secrets=[modal.Secret.from_name("underwriting_hf_token")],
-    timeout=1800, # Longer timeout for dataset generation
+    image=api_image,
+    secrets=[modal.Secret.from_name("teacher-api-key")], # E.g., OpenRouter or TogetherAI key
+    timeout=1800,
 )
-class TeacherLLMEngine:
-    """Runs the large Teacher Model (e.g., Llama-3.1-70B/405B) to generate diverse inputs."""
+class TeacherAPIClient:
+    """Uses a Pay-Per-Token API instead of hosting 405B on Modal GPUs."""
     
     @modal.enter()
-    def load_teacher(self):
-        from vllm import AsyncLLMEngine, AsyncEngineArgs
-        print(f"Loading Teacher Model: {settings.teacher_model_name}")
-        
-        engine_args = AsyncEngineArgs(
-            model=settings.teacher_model_name,
-            tensor_parallel_size=1, # Increase if using multi-GPU for 70B+ models
-            gpu_memory_utilization=0.90,
-            max_model_len=4096,
-            enforce_eager=False,
-            trust_remote_code=True
+    def setup_client(self):
+        from openai import AsyncOpenAI
+        # Example using Together AI (or OpenRouter/Groq by changing the base_url)
+        self.client = AsyncOpenAI(
+            api_key=os.environ["TEACHER_API_KEY"],
+            base_url="https://api.together.xyz/v1", 
         )
-        self.engine = AsyncLLMEngine.from_engine_args(engine_args)
 
     @modal.method()
     async def generate_diverse_applicant(self, seed: int) -> Dict[str, Any]:
-        """Prompts the teacher to generate a highly complex financial edge case."""
-        import uuid
-        from vllm import SamplingParams
-        from vllm.sampling_params import GuidedDecodingParams # type: ignore
+        """Prompts the external API teacher to generate a financial edge case."""
         
-        # We force the Teacher to output BOTH input schemas at once
+        # Define the exact JSON structure we want back
         combined_schema = {
             "type": "object",
             "properties": {
@@ -66,47 +47,39 @@ class TeacherLLMEngine:
             },
             "required": ["profile", "metrics"]
         }
-        
-        guided_params = GuidedDecodingParams(json=json.dumps(combined_schema))
-        sampling_params = SamplingParams(
-            temperature=0.7 + (seed % 3) * 0.1, # Varies creativity
-            max_tokens=2048,
-            guided_decoding=guided_params # type: ignore
-        )
 
         prompt = (
-            "<|im_start|>system\n"
             "You are a financial red-teamer. Generate a highly complex, edge-case applicant "
             "profile for an underwriting system. Create seasonal workers, trust funds, "
-            "shell LLCs, or applicants with high fraud probability and minor policy breaches. "
-            "Output strictly valid JSON matching the requested schema.<|im_end|>\n"
-            f"<|im_start|>user\nScenario seed: {seed}<|im_end|>\n"
-            "<|im_start|>assistant\n"
+            "shell LLCs, or applicants with high fraud probability and minor policy breaches.\n"
+            f"Scenario seed: {seed}"
         )
 
-        request_id = str(uuid.uuid4())
-        results = self.engine.generate(prompt, sampling_params, request_id)
+        response = await self.client.chat.completions.create(
+            model="meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful JSON data generator."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={
+                "type": "json_schema", 
+                "json_schema": {"name": "applicant_data", "schema": combined_schema}
+            },
+            temperature=0.7 + (seed % 3) * 0.1,
+        )
         
-        full_text = ""
-        async for output in results:
-            full_text = output.outputs[0].text
-            
-        # Clean and parse the Teacher's JSON output
-        clean_json = full_text.removeprefix("```json").removesuffix("```").strip()
-        return json.loads(clean_json)
+        return json.loads(response.choices[0].message.content) # type: ignore
 
 
-# 2. Orchestrate Generation, Pipeline Execution, and File Splitting
 @app.function(volumes={"/vol": app_volume}, timeout=3600)
 def generate_and_split_dataset(total_samples: int = 3000):
-    """Generates data in parallel, runs the pipeline, and splits into Train/Eval/Test."""
-    print(f"Starting Evol-Instruct generation for {total_samples} samples...")
+    """Generates data via API, runs the pipeline, and splits into Train/Eval/Test."""
+    print(f"Starting Evol-Instruct API generation for {total_samples} samples...")
     
-    teacher = TeacherLLMEngine()
+    teacher = TeacherAPIClient()
     pipeline = UnderwritingPipeline()
     
-    # Generate diverse inputs in parallel using Modal's .map()
-    # Note: map() handles the concurrency automatically based on available GPU workers
+    # Executes the API calls concurrently
     raw_inputs = list(teacher.generate_diverse_applicant.map(range(total_samples)))
     
     dataset: List[UnderwritingTrainingSample] = []
@@ -117,7 +90,6 @@ def generate_and_split_dataset(total_samples: int = 3000):
             profile = ApplicantProfile.model_validate(data["profile"])
             metrics = ExtractedFinancialMetrics.model_validate(data["metrics"])
             
-            # Ground Truth: The deterministic pipeline calculates the PERFECT math and decision
             memo = pipeline.run_preliminary_audit(profile, metrics)
             
             instruction = (
@@ -132,10 +104,6 @@ def generate_and_split_dataset(total_samples: int = 3000):
                 f"Verified Monthly Income: ${metrics.verified_monthly_income:,.2f}\n"
                 f"Total Monthly Debt Obligations: ${profile.total_monthly_debt:,.2f}\n"
                 f"Liquid Reserves: ${profile.liquid_assets:,.2f}\n"
-                f"Collateral Value: ${profile.stated_collateral_value or 0:,.2f}\n"
-                f"UBO Verified: {metrics.ubo_verified}\n"
-                f"PEP/Sanctions Hit: {metrics.pep_or_sanctions_hit}\n"
-                f"Fraud Confidence (Tampering): {metrics.fraud_metrics.document_tampering_score:.2f}\n"
                 f"Anomaly Flags: {metrics.anomaly_flags}"
             )
             
@@ -147,12 +115,9 @@ def generate_and_split_dataset(total_samples: int = 3000):
         except Exception as e:
             print(f"Skipping malformed sample: {e}")
 
-    # 3. Shuffle and Split the Dataset
-    print(f"Successfully generated {len(dataset)} valid samples. Shuffling and splitting...")
     random.seed(42)
     random.shuffle(dataset)
     
-    # 80% Train, 10% Eval, 10% Test split
     train_idx = int(len(dataset) * 0.8)
     eval_idx = int(len(dataset) * 0.9)
     
@@ -162,7 +127,6 @@ def generate_and_split_dataset(total_samples: int = 3000):
         "test.jsonl": dataset[eval_idx:]
     }
     
-    # 4. Save to Modal Persistent Volume
     data_dir = Path("/vol/dataset")
     data_dir.mkdir(parents=True, exist_ok=True)
     
@@ -170,15 +134,13 @@ def generate_and_split_dataset(total_samples: int = 3000):
         file_path = data_dir / filename
         with open(file_path, "w", encoding="utf-8") as f:
             for sample in samples:
-                record = {
+                f.write(json.dumps({
                     "instruction": sample.instruction,
                     "input_context": sample.input_context,
                     "expected_memo_json": sample.expected_memo_json
-                }
-                f.write(json.dumps(record) + "\n")
+                }) + "\n")
         print(f"Saved {len(samples)} samples to {file_path}")
 
 @app.local_entrypoint()
 def main():
-    """Trigger the cloud generation process from your local terminal."""
     generate_and_split_dataset.remote(total_samples=3000)
