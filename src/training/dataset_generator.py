@@ -85,15 +85,18 @@ def generate_local_dataset(total_samples: int = 3000):
             print(f"Validation or parsing error on seed {seed}: {e}")
             seed += 1 # Skip this seed and try the next one to avoid infinite loops
 
-    # 3. Shuffle and split the dataset exactly as requested
+    # 3. Shuffle and split the dataset dynamically (80% / 10% / 10%)
     print("Generation complete. Shuffling and splitting dataset...")
     random.seed(42)
     random.shuffle(dataset)
 
+    train_idx = int(len(dataset) * 0.8)
+    eval_idx = int(len(dataset) * 0.9)
+
     splits = {
-        "train.jsonl": dataset[:2000],
-        "eval.jsonl": dataset[2000:2500],
-        "test.jsonl": dataset[2500:3000]
+        "train.jsonl": dataset[:train_idx],
+        "eval.jsonl": dataset[train_idx:eval_idx],
+        "test.jsonl": dataset[eval_idx:]
     }
 
     # 4. Save locally
