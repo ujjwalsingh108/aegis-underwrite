@@ -9,6 +9,7 @@ and gradient checkpointing to maximize training throughput and memory efficiency
 
 from dataclasses import dataclass
 from typing import Dict, List, Any
+from pydantic import BaseModel, Field
 import torch
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model, TaskType
@@ -21,12 +22,14 @@ from transformers import (
 )
 from src.common.config import settings
 
+
 @dataclass
-class UnderwritingTrainingSample:
+class UnderwritingTrainingSample(BaseModel):
     """Structured training sample for supervised fine-tuning of the Qwen model."""
-    instruction: str
-    input_context: str
-    expected_memo_json: str
+    instruction: str = Field(..., min_length=1)
+    input_context: str = Field(..., min_length=1)
+    expected_memo_json: str = Field(..., min_length=1)
+
 
 class UnderwritingLoRATrainer:
     """Production LoRA Trainer executing strictly on GPU hardware."""
@@ -35,8 +38,8 @@ class UnderwritingLoRATrainer:
         self.model_name = settings.base_model_name
         self.output_dir = settings.lora_output_dir
         
-        # Initialize tokenizer with correct padding
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        # Initialize tokenizer and explicitly type it to bypass Pylance "Tensor" callable errors
+        self.tokenizer: Any = AutoTokenizer.from_pretrained(self.model_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         self.tokenizer.padding_side = "right" # Crucial for causal LM training
@@ -128,18 +131,19 @@ class UnderwritingLoRATrainer:
             mlm=False
         )
 
-        training_args = TrainingArguments(
+        # Type ignore bypasses Pylance's incomplete reading of the kwargs signature
+        training_args = TrainingArguments(  # type: ignore
             output_dir=self.output_dir,
             per_device_train_batch_size=4,
             per_device_eval_batch_size=4,
             gradient_accumulation_steps=4,
-            warmup_ratio=0.03,
+            warmup_ratio=0.03,          # type: ignore   
             num_train_epochs=3,
             learning_rate=2e-4,
             fp16=False,
             bf16=True,                  # Requires A10G/A100 GPUs
             logging_steps=10,
-            evaluation_strategy="steps",
+            eval_strategy="steps",      # Updated from evaluation_strategy to match newer API
             eval_steps=50,
             save_strategy="steps",
             save_steps=50,
@@ -161,5 +165,6 @@ class UnderwritingLoRATrainer:
         trainer.train()
         
         print(f"Training complete. Saving adapter to {self.output_dir}")
-        trainer.model.save_pretrained(self.output_dir)
+        # Save directly from peft_model to bypass Pylance's Optional[PreTrainedModel] warning on trainer.model
+        peft_model.save_pretrained(self.output_dir)
         self.tokenizer.save_pretrained(self.output_dir)
