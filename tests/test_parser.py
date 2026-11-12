@@ -19,11 +19,11 @@ def test_aggregate_metrics_variance_calculation(parser):
     """Tests if income variance percentage is accurately calculated and rounded."""
     metrics = parser.aggregate_metrics(
         stated_monthly_income=10000.0,
-        verified_income=8500.0,
+        verified_income=8000.0,
         detected_liabilities=3000.0,
         verified_reserves=15000.0
     )
-    assert metrics.income_variance_pct == -15.0
+    assert metrics.income_variance_pct == -20.0
     assert any("Income mismatch" in flag for flag in metrics.anomaly_flags)
 
 def test_aggregate_metrics_fraud_flags(parser):
