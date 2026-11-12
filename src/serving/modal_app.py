@@ -40,6 +40,7 @@ gpu_image = (
         "pypdf>=4.2.0",
         "pdfplumber>=0.11.0",
         "huggingface_hub>=0.24.0",
+        "tensorboard",
     )
     .add_local_python_source("src")
 )
