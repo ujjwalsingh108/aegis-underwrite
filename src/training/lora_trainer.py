@@ -134,23 +134,24 @@ class UnderwritingLoRATrainer:
         # Type ignore bypasses Pylance's incomplete reading of the kwargs signature
         training_args = TrainingArguments(  # type: ignore
             output_dir=self.output_dir,
+            logging_dir=f"{self.output_dir}/runs",  # <--- explicitly save logs to the Modal volume # type: ignore
             per_device_train_batch_size=4,
             per_device_eval_batch_size=4,
             gradient_accumulation_steps=4,
-            warmup_ratio=0.03,          # type: ignore   
+            warmup_ratio=0.03,     # type: ignore     
             num_train_epochs=3,
             learning_rate=2e-4,
             fp16=False,
             bf16=True,                  # Requires A10G/A100 GPUs
             logging_steps=10,
-            eval_strategy="steps",      # Updated from evaluation_strategy to match newer API
+            eval_strategy="steps",      
             eval_steps=50,
             save_strategy="steps",
             save_steps=50,
             load_best_model_at_end=True,
             lr_scheduler_type="cosine",
             optim="adamw_torch_fused",  # Highly optimized optimizer for Ampere GPUs
-            report_to="none"            # Update to "wandb" if you add Weights & Biases
+            report_to="tensorboard"     # <--- Enabled TensorBoard
         )
 
         trainer = Trainer(
