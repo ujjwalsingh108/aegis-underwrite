@@ -17,8 +17,8 @@ def test_evaluate_ratios_individual_dti(valid_individual_profile):
 def test_evaluate_ratios_llc_dscr_and_ltv(valid_llc_profile):
     """Happy Path: DSCR and LTV for LLC"""
     ratios = evaluate_ratios(valid_llc_profile)
-    assert ratios["calculated_dscr"] == 3.33  # 800000 / 240000 (rounded)
-    assert ratios["calculated_ltv"] == 0.67   # 1000000 / 1500000 (rounded)
+    assert ratios["calculated_dscr"] == 3.3333  # 800000 / 240000 (rounded)
+    assert ratios["calculated_ltv"] == 0.6667   # 1000000 / 1500000 (rounded)
 
 def test_evaluate_ratios_zero_income_individual(valid_individual_profile):
     """Boundary: Individual with 0 income"""
