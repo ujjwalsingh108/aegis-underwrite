@@ -31,7 +31,7 @@ class AppSettings(BaseSettings):
     use_gpu: bool = True
     gpu_type: str = "A10G"
     cpu_cores: float = 2.0
-    memory_mb: int = 32768   # 32 GB Gigabytes of RAM - Sufficient for Base Engine (Qwen2.5-1.5B), Vision Engine (Qwen2-VL-7B), Teacher Engine (Llama-3.1-405B)
+    memory_mb: int = 16384   # 16 GB Gigabytes of RAM - Sufficient for Base Engine (Qwen2.5-1.5B), Vision Engine (Qwen2-VL-2B-Instruct)
 
     # Agentic Models & Modalities
     base_model_name: str = "Qwen/Qwen2.5-1.5B-Instruct"
