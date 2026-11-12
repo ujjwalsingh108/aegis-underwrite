@@ -25,7 +25,7 @@ async def test_orchestrator_pipeline_execution_and_cleanup(MockEngine, MockParse
     
     # Mock async generator for _stream_internal
     async def mock_stream(*args, **kwargs):
-        yield '{"application_id": "APP-9921", "decision": "APPROVED", "calculated_dti": 0.3, "calculated_dscr": 1.5, "liquidity_runway_months": 10, "breached_policies": [], "risk_factors": [], "covenants": [], "audit_trail": []}'
+        yield '{"application_id": "APP-9921", "decision": "APPROVE", "calculated_dti": 0.3, "calculated_dscr": 1.5, "liquidity_runway_months": 10, "breached_policies": [], "risk_factors": [], "required_covenants": [], "audit_trail": []}'
     mock_engine_instance._stream_internal = mock_stream
     
     orchestrator = PipelineOrchestrator()
@@ -35,7 +35,7 @@ async def test_orchestrator_pipeline_execution_and_cleanup(MockEngine, MockParse
     
     # Assertions
     assert isinstance(memo, UnderwritingMemo)
-    assert memo.decision.value == "APPROVED"
+    assert memo.decision.value == "APPROVE"
     
     # Verify cleanup (Cannot track exact tempname easily without mocking tempfile, 
     # but we test that no dangling .pdf files are left in the working directory)
