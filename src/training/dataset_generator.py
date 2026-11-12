@@ -3,10 +3,14 @@ import random
 import os
 import time
 from pathlib import Path
+from dotenv import load_dotenv
 from groq import Groq, RateLimitError
 
 from src.common.schemas import ApplicantProfile, ExtractedFinancialMetrics
 from src.engine.pipeline import UnderwritingPipeline
+
+# Load the environment variables from the .env file into os.environ
+load_dotenv()
 
 def generate_local_dataset(total_samples: int = 3000):
     client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
@@ -38,7 +42,7 @@ def generate_local_dataset(total_samples: int = 3000):
     while samples_generated < total_samples:
         try:
             response = client.chat.completions.create(
-                model="llama3-70b-8192",
+                model=os.environ.get("GROQ_MODEL", "llama3-70b-8192"), # Added a fallback just in case
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Generate a highly complex, edge-case applicant profile. Seed: {seed}"}
