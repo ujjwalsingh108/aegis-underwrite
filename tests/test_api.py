@@ -21,13 +21,13 @@ def mock_llm_engine():
         mock_remote = MagicMock()
         mock_remote.return_value = {
             "application_id": "APP-111",
-            "decision": "APPROVED",
+            "decision": "APPROVE",
             "calculated_dti": 0.35,
             "calculated_dscr": 0.0,
             "liquidity_runway_months": 12,
             "breached_policies": [],
             "risk_factors": ["None"],
-            "covenants": [],
+            "required_covenants": [],
             "audit_trail": []
         }
         instance.generate_memo.remote = mock_remote
@@ -49,7 +49,7 @@ def test_underwrite_endpoint_success(mock_llm_engine):
     response = client.post("/underwrite", json=payload, headers=headers)
     
     assert response.status_code == 200
-    assert response.json()["decision"] == "APPROVED"
+    assert response.json()["decision"] == "APPROVE"
     mock_llm_engine.assert_called_once()
 
 def test_underwrite_endpoint_missing_fields():
