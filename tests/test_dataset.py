@@ -9,7 +9,7 @@ import json
 import os
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from src.training.dataset_generator_free import generate_local_dataset
+from src.training.dataset_generator import generate_local_dataset
 from src.common.schemas import UnderwritingDecision
 
 # Mock output matching the Groq LLM's generated schema
@@ -40,8 +40,8 @@ MOCK_GROQ_OUTPUT = {
     }
 }
 
-@patch("src.training.dataset_generator_free.Groq")
-@patch("src.training.dataset_generator_free.time.sleep")
+@patch("src.training.dataset_generator.Groq")
+@patch("src.training.dataset_generator.time.sleep")
 def test_generate_and_split_dataset_logic(mock_sleep, MockGroq, tmp_path: Path):
     """
     Tests that the Groq raw JSON outputs are correctly parsed by the deterministic
