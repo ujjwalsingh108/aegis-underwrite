@@ -43,13 +43,17 @@ class UnderwritingPipeline:
         ltv = None
         if profile.stated_collateral_value and profile.stated_collateral_value > 0:
             ltv = profile.requested_loan_amount / profile.stated_collateral_value
+
+        # Safely format DTI for the audit trail (LLCs/Corps will be N/A)
+        dti_val = ratio_results.get('calculated_dti')
+        dti_str = f"{dti_val:.2%}" if dti_val is not None else "N/A"
             
         audit_trail.append(
             AuditTrailEntry(
                 step_name="RatioEvaluation",
                 agent_role="Deterministic_Math_Engine",
                 status=ratio_results.get("status", "SUCCESS"),
-                details=f"Computed DTI: {ratio_results['calculated_dti']:.2%}, Runway: {ratio_results['liquidity_runway_months']} months",
+                details=f"Computed DTI: {dti_str}, Runway: {ratio_results.get('liquidity_runway_months', 0)} months",
             )
         )
 

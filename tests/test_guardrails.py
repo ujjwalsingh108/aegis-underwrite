@@ -57,42 +57,44 @@ def test_guardrail_rejects_severe_income_discrepancy():
     assert any("Severe income variance" in risk for risk in memo.risk_factors)
 
 def test_guardrail_flags_conditional_for_single_breach():
-    """
-    Ensures a healthy applicant with a single minor breach (tight liquidity runway)
-    is routed to conditional approval with mandatory defensive covenants.
-    """
-    pipeline = UnderwritingPipeline()
-    profile = ApplicantProfile(
-        applicant_id="APP-TIGHT-CASH-02",
-        entity_type=EntityType.LLC,
-        requested_loan_amount=250000.0,
-        stated_monthly_income=100000.0,
-        total_monthly_debt=25000.0,  # DTI = 25% (healthy)
-        liquid_assets=50000.0        # Runway = 2 months (fails the 6.0 month min)
-    )
-    
-    metrics = ExtractedFinancialMetrics(
-        verified_monthly_income=100000.0,
-        detected_monthly_liabilities=25000.0,
-        verified_liquid_reserves=50000.0,
-        income_variance_pct=0.0,
-        pep_or_sanctions_hit=False,
-        ubo_verified=True,
-        fraud_metrics=MultimodalFraudMetrics(
-            kyc_confidence_score=0.95, 
-            document_tampering_score=0.02
-        ),
-        anomaly_flags=[],
-    )
-
-    memo = pipeline.run_preliminary_audit(profile, metrics)
-    
-    # Assert deterministic conditional logic
-    assert memo.decision == UnderwritingDecision.CONDITIONAL_APPROVAL
-    assert memo.approved_loan_amount == 250000.0
-    assert len(memo.required_covenants) > 0
-    # As an LLC, the pipeline should have dynamically added a UBO guarantee covenant
-    assert any("Guarantee" in covenant for covenant in memo.required_covenants)
+        """
+        Ensures a healthy applicant with a single minor breach (tight liquidity runway)
+        is routed to conditional approval with mandatory defensive covenants.
+        """
+        pipeline = UnderwritingPipeline()
+        profile = ApplicantProfile(
+            applicant_id="APP-TIGHT-CASH-02",
+            entity_type=EntityType.LLC,           # <--- Back to LLC
+            requested_loan_amount=250000.0,
+            stated_monthly_income=0.0,            # (Not used for LLCs)
+            total_monthly_debt=25000.0,               # (Not used for LLCs)
+            liquid_assets=50000.0,                # Runway = 2 months (fails the 6.0 month min)
+            annual_operating_income=1200000.0,    # <--- Added for DSCR math
+            annual_debt_service=300000.0          # <--- DSCR = 4.0 (Healthy)
+        )
+        
+        metrics = ExtractedFinancialMetrics(
+            verified_monthly_income=0.0,          # (Not used for LLCs)
+            detected_monthly_liabilities=25000.0,     # (Not used for LLCs)
+            verified_liquid_reserves=50000.0,
+            income_variance_pct=0.0,
+            pep_or_sanctions_hit=False,
+            ubo_verified=True,
+            fraud_metrics=MultimodalFraudMetrics(
+                kyc_confidence_score=0.95,
+                document_tampering_score=0.02
+            ),
+            anomaly_flags=[],
+        )
+        
+        memo = pipeline.run_preliminary_audit(profile, metrics)
+        
+        # Assert deterministic conditional logic
+        assert memo.decision == UnderwritingDecision.CONDITIONAL_APPROVAL
+        assert memo.approved_loan_amount == 250000.0
+        assert len(memo.required_covenants) > 0
+        # As an LLC, the pipeline should have dynamically added a UBO guarantee covenant
+        assert any("Guarantee" in covenant for covenant in memo.required_covenants)
 
 def test_guardrail_fatal_fraud_and_sanctions():
     """
