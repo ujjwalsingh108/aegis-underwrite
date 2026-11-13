@@ -42,7 +42,7 @@ def generate_local_dataset(total_samples: int = 3000):
     while samples_generated < total_samples:
         try:
             response = client.chat.completions.create(
-                model=os.environ.get("GROQ_MODEL", "llama3-70b-8192"), # Added a fallback just in case
+                model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b"), # Added a fallback just in case
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Generate a highly complex, edge-case applicant profile. Seed: {seed}"}
