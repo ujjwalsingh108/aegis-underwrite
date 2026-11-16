@@ -42,6 +42,10 @@ gpu_image = (
         "huggingface_hub>=0.24.0",
         "tensorboard",
     )
+    .pip_install(
+        "flash-attn", 
+        extra_options="--no-build-isolation"
+    )
     .add_local_python_source("src")
 )
 
@@ -50,7 +54,7 @@ app = modal.App(name=settings.app_name)
 @app.function(
     image=gateway_image,  # Explicitly assign the gateway image
     volumes={settings.lora_output_dir: app_volume},  # Fix NameError: use app_volume
-    secrets=[modal.Secret.from_name("aegis-api-secret")]
+    secrets=[modal.Secret.from_name("underwriting_hf_token")]
 )
 @asgi_app()
 def web_endpoint():
