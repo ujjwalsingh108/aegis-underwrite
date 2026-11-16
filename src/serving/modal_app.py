@@ -44,7 +44,7 @@ gpu_image = (
     )
     .pip_install(
         "flash-attn", 
-        extra_options="--no-build-isolation"
+        extra_options="--extra-index-url https://wheels.astral.sh/simple/cu126/"
     )
     .add_local_python_source("src")
 )
