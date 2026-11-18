@@ -2,10 +2,12 @@
 FastAPI web gateway for the automated underwriting pipeline.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Security, Depends
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from typing import List
 
+from src.common.config import settings
 from src.common.schemas import UnderwritingMemo
 from src.serving.vllm_engine import UnderwritingLLMEngine
 
@@ -14,6 +16,14 @@ app = FastAPI(
     description="Automated LLM-driven underwriting pipeline.",
     version="1.0.0"
 )
+
+# --- Security Dependency ---
+api_key_header = APIKeyHeader(name="X-API-Key")
+
+def verify_api_key(api_key: str = Security(api_key_header)):
+    if api_key != settings.master_api_key:
+        raise HTTPException(status_code=403, detail="Invalid or missing API Key")
+    return api_key
 
 class UnderwriteRequest(BaseModel):
     """Incoming JSON payload from a frontend or loan origination system."""
@@ -25,7 +35,10 @@ class UnderwriteRequest(BaseModel):
     anomaly_flags: List[str] = []
 
 @app.post("/underwrite", response_model=UnderwritingMemo)
-async def process_underwriting(request: UnderwriteRequest):
+async def process_underwriting(
+    request: UnderwriteRequest, 
+    api_key: str = Depends(verify_api_key)  # <--- Injected Security
+):
     """Generates an underwriting memo for the provided applicant financials."""
 
     # 1. Calculate variance mathematically
@@ -62,4 +75,3 @@ async def process_underwriting(request: UnderwriteRequest):
         raise HTTPException(status_code=422, detail=f"LLM Schema Generation Error: {str(ve)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-

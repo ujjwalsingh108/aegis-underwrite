@@ -7,7 +7,6 @@ This class runs exclusively on an NVIDIA GPU in Modal.
 
 import os
 import json
-import sys
 import uuid
 from typing import AsyncGenerator
 import modal
@@ -52,7 +51,7 @@ class UnderwritingLLMEngine:
             enforce_eager=False,
             trust_remote_code=True,
             enable_lora=self.has_lora,
-            max_loras=1 if self.has_lora else None,     # type: ignore
+            max_loras=1 if self.has_lora else None,         # type: ignore
             max_lora_rank=16 if self.has_lora else None,    # type: ignore
         )
 
@@ -97,7 +96,7 @@ class UnderwritingLLMEngine:
     async def generate_stream(
         self,
         prompt: str,
-        temperature: float = 0.1, # the lower the temprature, the deterministic the output
+        temperature: float = 0.1, # the lower the temperature, the more deterministic the output
         max_tokens: int = 1024,
     ) -> AsyncGenerator[str, None]:
         """Exposed Modal method for external streaming consumption."""
@@ -144,6 +143,7 @@ class UnderwritingLLMEngine:
             except Exception as e:
                 print(f"Notice during shutdown: {e}")
 
+
 @app.local_entrypoint()
 def test_stream():
     """Runs token streaming and validates Pydantic JSON decoding."""
@@ -168,7 +168,11 @@ def test_stream():
         memo = engine.generate_memo.remote(test_prompt)
         print("Schema validation successful!")
         print(f"Decision: {memo.decision}")
-        print(f"Computed DTI: {memo.calculated_dti:.2%}")
+        
+        # Safely handle Optional DTI
+        dti_display = f"{memo.calculated_dti:.2%}" if memo.calculated_dti is not None else "N/A"
+        print(f"Computed DTI: {dti_display}")
+        
         print(f"Liquidity Runway: {memo.liquidity_runway_months} months")
     except Exception as exc:
         print(f"Schema validation check error: {exc}")
