@@ -30,9 +30,9 @@ gateway_image = (
 gpu_image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
-        "vllm",         
+        "vllm==0.4.2",
         "outlines",
-        "torch>=2.4.0",
+        "torch==2.3.0",  # <--- Bumped to 2.3.0 to satisfy vLLM
         "transformers>=4.48.2,<4.54.0",
         "accelerate>=0.33.0",
         "peft>=0.10.0",
@@ -41,10 +41,12 @@ gpu_image = (
         "pdfplumber>=0.11.0",
         "huggingface_hub>=0.24.0",
         "tensorboard",
+        "pydantic>=2.7.0",          
+        "pydantic-settings>=2.2.0"  
     )
+    # The pre-compiled wheel for PyTorch 2.3.0 and CUDA 12.2
     .pip_install(
-        "flash-attn", 
-        extra_options="--extra-index-url https://wheels.astral.sh/simple/cu126/"
+        "https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.8/flash_attn-2.5.8+cu122torch2.3cxx11abiFALSE-cp311-cp311-linux_x86_64.whl"
     )
     .add_local_python_source("src")
 )
