@@ -141,13 +141,14 @@ class UnderwritingLoRATrainer:
             warmup_ratio=0.03,     # type: ignore     
             num_train_epochs=3,
             learning_rate=2e-4,
-            fp16=False,
+            max_steps=450,
             bf16=True,                  # Requires A10G/A100 GPUs
             logging_steps=10,
             eval_strategy="steps",      
             eval_steps=50,
             save_strategy="steps",
             save_steps=50,
+            save_total_limit=2,
             load_best_model_at_end=True,
             lr_scheduler_type="cosine",
             optim="adamw_torch_fused",  # Highly optimized optimizer for Ampere GPUs
@@ -163,7 +164,7 @@ class UnderwritingLoRATrainer:
         )
 
         print("Starting LoRA Fine-Tuning...")
-        trainer.train()
+        trainer.train(resume_from_checkpoint=True)
         
         print(f"Training complete. Saving adapter to {self.output_dir}")
         # Save directly from peft_model to bypass Pylance's Optional[PreTrainedModel] warning on trainer.model
