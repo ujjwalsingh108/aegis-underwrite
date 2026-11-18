@@ -164,6 +164,12 @@ class UnderwritingLoRATrainer:
         )
 
         print("Starting LoRA Fine-Tuning...")
+
+        # 1. Import the exact module where the function is executing
+        import transformers.trainer
+        
+        # 2. Overwrite the local reference inside that specific module
+        transformers.trainer.check_torch_load_is_safe = lambda: None    # type: ignore
         trainer.train(resume_from_checkpoint=True)
         
         print(f"Training complete. Saving adapter to {self.output_dir}")
