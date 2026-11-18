@@ -69,7 +69,7 @@ async def process_underwriting(
 
     # 4. Dispatch the request to the GPU container and return the Pydantic model
     try:
-        memo = engine.generate_memo.remote(prompt)
+        memo = engine.generate_memo.remote.aio(prompt) # Non-blocking
         return memo
     except ValueError as ve:
         raise HTTPException(status_code=422, detail=f"LLM Schema Generation Error: {str(ve)}")
