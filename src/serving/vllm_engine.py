@@ -10,15 +10,11 @@ import json
 import uuid
 from typing import AsyncGenerator
 import modal
-from rich import print
-
-from vllm import AsyncEngineArgs, AsyncLLMEngine, SamplingParams
-from vllm.lora.request import LoRARequest
-from vllm.sampling_params import GuidedDecodingParams   # type: ignore
 
 from src.common.config import settings
 from src.common.schemas import UnderwritingMemo
 from src.serving.modal_app import app, app_volume, gpu_image
+
 
 @app.cls(
     image=gpu_image,
@@ -32,6 +28,8 @@ class UnderwritingLLMEngine:
 
     @modal.enter()
     def initialize_modal(self):
+        from vllm import AsyncEngineArgs, AsyncLLMEngine
+
         print(f"Initializing model on GPU: {settings.gpu_type}")
         print(f"Target model identifier: {settings.base_model_name}")
 
@@ -41,7 +39,7 @@ class UnderwritingLLMEngine:
         if self.has_lora:
             print(f"Found trained LoRA adapter at {adapter_dir}")
         else:
-            print(f"No LoRA adapter found. Running base model.")
+            print("No LoRA adapter found. Running base model.")
 
         engine_args = AsyncEngineArgs(
             model=settings.base_model_name,
@@ -64,15 +62,17 @@ class UnderwritingLLMEngine:
         max_tokens: int = 1024,
     ) -> AsyncGenerator[str, None]:
         """Internal generator containing actual streaming inference logic via vLLM."""
-        
-        # Force the LLM to strictly follow the Pydantic schema using outlines
+        from vllm import SamplingParams
+        from vllm.lora.request import LoRARequest
+        from vllm.sampling_params import GuidedDecodingParams  # type: ignore
+
         schema_str = json.dumps(UnderwritingMemo.model_json_schema())
         guided_params = GuidedDecodingParams(json=schema_str)
 
         sampling_params = SamplingParams(
-            temperature=temperature, 
+            temperature=temperature,
             max_tokens=max_tokens,
-            guided_decoding=guided_params   # type: ignore
+            guided_decoding=guided_params,  # type: ignore
         )
 
         lora_request = (
