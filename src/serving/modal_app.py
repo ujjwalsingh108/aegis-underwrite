@@ -56,7 +56,10 @@ app = modal.App(name=settings.app_name)
 @app.function(
     image=gateway_image,  # Explicitly assign the gateway image
     volumes={settings.lora_output_dir: app_volume},  # Fix NameError: use app_volume
-    secrets=[modal.Secret.from_name("underwriting_hf_token")]
+    secrets=[
+        modal.Secret.from_name("underwriting_hf_token"),
+        modal.Secret.from_name("aegis-rbac-keys"),
+    ]
 )
 @asgi_app()
 def web_endpoint():
