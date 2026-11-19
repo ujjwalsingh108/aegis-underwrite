@@ -2,11 +2,12 @@
 FastAPI web gateway for the automated underwriting pipeline.
 """
 
-from fastapi import FastAPI, HTTPException, Security, Depends
-from fastapi.security import APIKeyHeader
-from pydantic import BaseModel
 from typing import List
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
+from src.api.auth import AuthenticatedUser, RoleChecker, UserRole
 from src.common.config import settings
 from src.common.schemas import UnderwritingMemo
 from src.serving.vllm_engine import UnderwritingLLMEngine
@@ -14,16 +15,23 @@ from src.serving.vllm_engine import UnderwritingLLMEngine
 app = FastAPI(
     title="Aegis Underwriting API",
     description="Automated LLM-driven underwriting pipeline.",
-    version="1.0.0"
+    version="1.0.0",
 )
 
-# --- Security Dependency ---
-api_key_header = APIKeyHeader(name="X-API-Key")
+# --- CORS Middleware ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-def verify_api_key(api_key: str = Security(api_key_header)):
-    if api_key != settings.master_api_key:
-        raise HTTPException(status_code=403, detail="Invalid or missing API Key")
-    return api_key
+# --- RBAC Role Guards ---
+allow_underwriting = RoleChecker([UserRole.ADMIN, UserRole.UNDERWRITER])
+allow_audit_read = RoleChecker([UserRole.ADMIN, UserRole.UNDERWRITER, UserRole.AUDITOR])
+allow_admin_only = RoleChecker([UserRole.ADMIN])
+
 
 class UnderwriteRequest(BaseModel):
     """Incoming JSON payload from a frontend or loan origination system."""
@@ -34,17 +42,35 @@ class UnderwriteRequest(BaseModel):
     liquid_reserves: float
     anomaly_flags: List[str] = []
 
+
+@app.get("/health")
+async def health_check():
+    """Public liveness probe for Modal and uptime monitors."""
+    return {"status": "ok", "environment": settings.environment}
+
+
+@app.get("/auth/me", response_model=AuthenticatedUser)
+async def read_current_user(
+    current_user: AuthenticatedUser = Depends(allow_audit_read),
+):
+    """Returns the authenticated caller's identity and assigned RBAC role."""
+    return current_user
+
+
 @app.post("/underwrite", response_model=UnderwritingMemo)
 async def process_underwriting(
-    request: UnderwriteRequest, 
-    api_key: str = Depends(verify_api_key)  # <--- Injected Security
+    request: UnderwriteRequest,
+    current_user: AuthenticatedUser = Depends(allow_underwriting),
 ):
-    """Generates an underwriting memo for the provided applicant financials."""
+    """Generates an underwriting memo. Restricted to ADMIN and UNDERWRITER roles."""
 
     # 1. Calculate variance mathematically
     variance = 0.0
     if request.stated_monthly_income > 0:
-        variance = ((request.verified_monthly_income - request.stated_monthly_income) / request.stated_monthly_income) * 100
+        variance = (
+            (request.verified_monthly_income - request.stated_monthly_income)
+            / request.stated_monthly_income
+        ) * 100
 
     # 2. Format the prompt exactly as it was during SFT training
     prompt = (
@@ -69,7 +95,7 @@ async def process_underwriting(
 
     # 4. Dispatch the request to the GPU container and return the Pydantic model
     try:
-        memo = await engine.generate_memo.remote.aio(prompt) # Non-blocking
+        memo = await engine.generate_memo.remote.aio(prompt)  # Non-blocking
         return memo
     except ValueError as ve:
         raise HTTPException(status_code=422, detail=f"LLM Schema Generation Error: {str(ve)}")
