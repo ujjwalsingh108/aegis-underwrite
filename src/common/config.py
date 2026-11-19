@@ -11,10 +11,18 @@ class AppSettings(BaseSettings):
     modal_volume_name: str = "aegis-underwrite-volume"
     environment: str = Field(default="development", description="Current deployment environment (dev, staging, prod)")
 
-    # Security & API Keys
+    # Security & API Keys (RBAC)
     master_api_key: str = Field(
-        default="dev-secret-key-change-in-prod", 
-        description="Master API key for authenticating FastAPI requests"
+        default="MASTER_API_KEY",
+        description="Admin-level API key with full access"
+    )
+    underwriter_api_key: str = Field(
+        default="UNDERWRITER_API_KEY",
+        description="API key for Underwriters who can trigger LLM inference"
+    )
+    auditor_api_key: str = Field(
+        default="AUDITOR_API_KEY",
+        description="Read-only API key for compliance and audit review"
     )
 
     # Frontend Decoupling & Security
