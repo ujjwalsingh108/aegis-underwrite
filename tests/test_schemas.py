@@ -9,14 +9,16 @@ or hallucinated enumerations before they can enter the mathematical engine or vL
 
 import pytest
 from pydantic import ValidationError
+
 from src.common.schemas import (
-    ApplicantProfile, 
-    EntityType, 
-    MultimodalFraudMetrics, 
+    ApplicantProfile,
+    AuditTrailEntry,  # Add this import
+    EntityType,
+    MultimodalFraudMetrics,
     UnderwritingDecision,
     UnderwritingMemo,
-    AuditTrailEntry  # Add this import
 )
+
 
 def test_applicant_profile_valid_instantiation():
     """Happy Path: Ensures valid data instantiates correctly."""
@@ -89,3 +91,5 @@ def test_underwriting_memo_strict_compliance():
         required_covenants=["Maintain $10k minimum balance"], 
         audit_trail=mock_audit_trail 
     )
+    assert memo.decision == UnderwritingDecision.CONDITIONAL_APPROVAL
+    assert len(memo.audit_trail) == 2

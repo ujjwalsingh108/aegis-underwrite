@@ -14,11 +14,14 @@ c. Commits the resulting adapter weights to the persistent Modal volume for infe
 """
 
 import os
-from pathlib import Path
+
 import modal
 
 from src.common.config import settings
+from src.common.logger import get_logger
 from src.serving.modal_app import app, app_volume, gpu_image
+
+logger = get_logger("modal_train")
 
 @app.function(
     image=gpu_image,
@@ -31,7 +34,7 @@ def train_lora_job():
     """Executes the GPU-bound LoRA fine-tuning loop and commits adapter weights."""
     from src.training.lora_trainer import UnderwritingLoRATrainer
     
-    print(f"--- Starting Production LoRA Training Job on GPU: {settings.gpu_type} ---")
+    logger.info("training_job_started", extra={"gpu": settings.gpu_type})
     
     # 1. Verify Dataset Existence
     train_path = "/vol/dataset/train.jsonl"
@@ -43,7 +46,7 @@ def train_lora_job():
             "Please run the dataset_generator.py Evol-Instruct pipeline first."
         )
         
-    print(f"Found training data at {train_path} and eval data at {eval_path}.")
+    logger.info("datasets_found", extra={"train": train_path, "eval": eval_path})
 
     # 2. Initialize the optimized trainer
     trainer = UnderwritingLoRATrainer()
@@ -55,13 +58,12 @@ def train_lora_job():
     # 4. Commit persistent volume changes
     # This is the most critical step in serverless training. If the container shuts down
     # before committing, all trained LoRA weights saved to /vol will be permanently lost.
-    print("Committing LoRA adapter weights to Modal Volume...")
     app_volume.commit()
-    print("Commit successful! The adapter is now available for the vLLM inference engine.")
+    logger.info("adapter_committed", extra={"volume": settings.modal_volume_name})
 
 @app.local_entrypoint()
 def main():
     """Trigger the remote training run from the local CLI."""
-    print("Dispatching production LoRA training job to Modal...")
+    logger.info("dispatching_training_job")
     train_lora_job.remote()
-    print("Training job complete and volume committed.")
+    logger.info("training_job_finished")

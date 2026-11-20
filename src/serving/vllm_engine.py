@@ -5,15 +5,50 @@ continuous batching, and prefix caching.
 This class runs exclusively on an NVIDIA GPU in Modal.
 """
 
-import os
 import json
+import os
 import uuid
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
+
 import modal
 
 from src.common.config import settings
-from src.common.schemas import UnderwritingMemo
+from src.common.logger import get_logger
+from src.common.prompts import build_inference_prompt
+from src.common.schemas import (
+    ApplicantProfile,
+    EntityType,
+    ExtractedFinancialMetrics,
+    MultimodalFraudMetrics,
+    UnderwritingMemo,
+)
 from src.serving.modal_app import app, app_volume, gpu_image
+
+logger = get_logger("vllm")
+
+
+def _structured_output_kwargs(schema_str: str) -> dict[str, Any]:
+    """Builds JSON-schema constrained decoding kwargs for whichever vLLM version is installed.
+
+    vLLM <=0.5 has no per-request guided decoding on SamplingParams, 0.6-0.10 exposes
+    ``GuidedDecodingParams``/``guided_decoding`` and newer releases ``StructuredOutputsParams``/
+    ``structured_outputs``. Without support we decode unconstrained and rely on Pydantic
+    validation in ``generate_memo``.
+    """
+    try:
+        from vllm.sampling_params import StructuredOutputsParams  # type: ignore
+
+        return {"structured_outputs": StructuredOutputsParams(json=schema_str)}
+    except ImportError:
+        pass
+    try:
+        from vllm.sampling_params import GuidedDecodingParams  # type: ignore
+
+        return {"guided_decoding": GuidedDecodingParams(json=schema_str)}
+    except ImportError:
+        logger.warning("vLLM build has no per-request structured outputs; decoding unconstrained")
+        return {}
 
 
 @app.cls(
@@ -30,27 +65,27 @@ class UnderwritingLLMEngine:
     def initialize_modal(self):
         from vllm import AsyncEngineArgs, AsyncLLMEngine
 
-        print(f"Initializing model on GPU: {settings.gpu_type}")
-        print(f"Target model identifier: {settings.base_model_name}")
+        logger.info(
+            "initializing_model",
+            extra={"gpu": settings.gpu_type, "model": settings.base_model_name},
+        )
 
         adapter_dir = settings.lora_output_dir
         self.has_lora = os.path.exists(os.path.join(adapter_dir, "adapter_config.json"))
 
-        if self.has_lora:
-            print(f"Found trained LoRA adapter at {adapter_dir}")
-        else:
-            print("No LoRA adapter found. Running base model.")
+        logger.info("lora_adapter", extra={"found": self.has_lora, "path": adapter_dir})
 
         engine_args = AsyncEngineArgs(
-            model=settings.base_model_name,
-            tensor_parallel_size=1,
-            gpu_memory_utilization=0.90,
-            max_model_len=4096,
-            enforce_eager=False,
-            trust_remote_code=True,
-            enable_lora=self.has_lora,
-            max_loras=1 if self.has_lora else None,         # type: ignore
-            max_lora_rank=16 if self.has_lora else None,    # type: ignore
+            model=settings.base_model_name,                 # type: ignore
+            tensor_parallel_size=1,                         # type: ignore
+            gpu_memory_utilization=0.90,                    # type: ignore    
+            max_model_len=4096,                             # type: ignore
+            enforce_eager=False,                            # type: ignore
+            trust_remote_code=True,                         # type: ignore
+            enable_lora=self.has_lora,                      # type: ignore                          
+            # max_loras / max_lora_rank are only read when enable_lora=True
+            max_loras=1,                                    # type: ignore
+            max_lora_rank=16,                               # type: ignore
         )
 
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
@@ -64,15 +99,12 @@ class UnderwritingLLMEngine:
         """Internal generator containing actual streaming inference logic via vLLM."""
         from vllm import SamplingParams
         from vllm.lora.request import LoRARequest
-        from vllm.sampling_params import GuidedDecodingParams  # type: ignore
 
         schema_str = json.dumps(UnderwritingMemo.model_json_schema())
-        guided_params = GuidedDecodingParams(json=schema_str)
-
         sampling_params = SamplingParams(
             temperature=temperature,
             max_tokens=max_tokens,
-            guided_decoding=guided_params,  # type: ignore
+            **_structured_output_kwargs(schema_str),
         )
 
         lora_request = (
@@ -132,7 +164,13 @@ class UnderwritingLLMEngine:
                 parsed = parsed["underwriting_memo"]
             return UnderwritingMemo.model_validate(parsed)
         except Exception as e:
-            raise ValueError(f"Schema validation failed: {e}\nRaw output:\n{full_output}")
+            # Raw output can contain applicant PII: keep it in worker logs, not in the exception
+            # that propagates to the gateway (and potentially to clients).
+            logger.warning(
+                "memo_schema_validation_failed",
+                extra={"error": str(e)[:500], "raw_output": full_output[:2000]},
+            )
+            raise ValueError(f"LLM memo failed schema validation: {type(e).__name__}") from None
 
     @modal.exit()
     def cleanup_modal(self):
@@ -141,38 +179,37 @@ class UnderwritingLLMEngine:
             try:
                 self.engine.shutdown()
             except Exception as e:
-                print(f"Notice during shutdown: {e}")
+                logger.warning("engine_shutdown_notice", extra={"error": str(e)})
 
 
 @app.local_entrypoint()
 def test_stream():
-    """Runs token streaming and validates Pydantic JSON decoding."""
-    print("\n--- Connecting to Modal remote GPU worker ---")
-    engine = UnderwritingLLMEngine()
-
-    test_prompt = (
-        "<|im_start|>system\n"
-        "You are an underwriting risk analyst. Output the formal underwriting memo JSON.<|im_end|>\n"
-        "<|im_start|>user\n"
-        "Applicant ID: APP-DEMO-01\n"
-        "Stated Monthly Income: $50,000.00\n"
-        "Verified Monthly Income: $50,000.00\n"
-        "Total Monthly Debt Obligations: $35,000.00\n"
-        "Liquid Reserves: $10,000.00\n"
-        "Anomaly Flags: []<|im_end|>\n"
-        "<|im_start|>assistant\n"
+    """Runs a remote memo generation with the canonical prompt and validates the schema."""
+    profile = ApplicantProfile(
+        applicant_id="APP-DEMO-01",
+        entity_type=EntityType.INDIVIDUAL,
+        requested_loan_amount=250_000.0,
+        stated_monthly_income=50_000.0,
+        total_monthly_debt=35_000.0,
+        liquid_assets=10_000.0,
     )
-
-    print("Executing structured UnderwritingMemo schema validation...")
+    metrics = ExtractedFinancialMetrics(
+        verified_monthly_income=50_000.0,
+        detected_monthly_liabilities=35_000.0,
+        verified_liquid_reserves=10_000.0,
+        fraud_metrics=MultimodalFraudMetrics(kyc_confidence_score=0.98, document_tampering_score=0.01),
+        income_variance_pct=0.0,
+    )
+    engine = UnderwritingLLMEngine()
     try:
-        memo = engine.generate_memo.remote(test_prompt)
-        print("Schema validation successful!")
-        print(f"Decision: {memo.decision}")
-        
-        # Safely handle Optional DTI
-        dti_display = f"{memo.calculated_dti:.2%}" if memo.calculated_dti is not None else "N/A"
-        print(f"Computed DTI: {dti_display}")
-        
-        print(f"Liquidity Runway: {memo.liquidity_runway_months} months")
+        memo = engine.generate_memo.remote(build_inference_prompt(profile, metrics))
+        logger.info(
+            "smoke_test_ok",
+            extra={
+                "decision": memo.decision.value,
+                "dti": memo.calculated_dti,
+                "runway_months": memo.liquidity_runway_months,
+            },
+        )
     except Exception as exc:
-        print(f"Schema validation check error: {exc}")
+        logger.error("smoke_test_failed", extra={"error": str(exc)})

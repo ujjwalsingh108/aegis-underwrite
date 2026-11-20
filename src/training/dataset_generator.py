@@ -1,19 +1,32 @@
+"""
+Offline teacher-data generation: Groq produces edge-case applicants, the deterministic
+rules engine produces the ground-truth memo, and rows are written in the canonical prompt
+format shared with serving (src/common/prompts.py).
+"""
+
 import json
 import random
-import os
 import time
 from pathlib import Path
-from dotenv import load_dotenv
+
 from groq import Groq, RateLimitError
 
-from src.common.schemas import ApplicantProfile, ExtractedFinancialMetrics
+from src.common.config import settings
+from src.common.logger import get_logger
+from src.common.prompts import SYSTEM_INSTRUCTION, build_input_context
+from src.common.schemas import (
+    ApplicantProfile,
+    ExtractedFinancialMetrics,
+    UnderwritingTrainingSample,
+)
 from src.engine.pipeline import UnderwritingPipeline
 
-# Load the environment variables from the .env file into os.environ
-load_dotenv()
+logger = get_logger("dataset_generator")
+
 
 def generate_local_dataset(total_samples: int = 3000):
-    client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+    api_key = settings.groq_api_key.get_secret_value() if settings.groq_api_key else None
+    client = Groq(api_key=api_key)
     pipeline = UnderwritingPipeline()
     dataset = []
 
@@ -33,7 +46,7 @@ def generate_local_dataset(total_samples: int = 3000):
         f"{json.dumps(combined_schema)}"
     )
 
-    print(f"Starting generation of {total_samples} samples via Groq API...")
+    logger.info("generation_started", extra={"total_samples": total_samples})
     
     samples_generated = 0
     seed = 0
@@ -42,7 +55,7 @@ def generate_local_dataset(total_samples: int = 3000):
     while samples_generated < total_samples:
         try:
             response = client.chat.completions.create(
-                model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b"), # Added a fallback just in case
+                model=settings.groq_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Generate a highly complex, edge-case applicant profile. Seed: {seed}"}
@@ -58,39 +71,30 @@ def generate_local_dataset(total_samples: int = 3000):
             metrics = ExtractedFinancialMetrics.model_validate(data["metrics"])
             memo = pipeline.run_preliminary_audit(profile, metrics)
             
-            # Format exactly how the LoRA adapter needs to see it
-            input_context = (
-                f"Applicant ID: {profile.applicant_id}\n"
-                f"Entity Type: {profile.entity_type.value}\n"
-                f"Stated Monthly Income: ${profile.stated_monthly_income:,.2f}\n"
-                f"Verified Monthly Income: ${metrics.verified_monthly_income:,.2f}\n"
-                f"Total Monthly Debt Obligations: ${profile.total_monthly_debt:,.2f}\n"
-                f"Liquid Reserves: ${profile.liquid_assets:,.2f}\n"
-                f"Anomaly Flags: {metrics.anomaly_flags}"
+            # Canonical prompt format shared with the serving path
+            row = UnderwritingTrainingSample(
+                instruction=SYSTEM_INSTRUCTION,
+                input_context=build_input_context(profile, metrics),
+                expected_memo_json=memo.model_dump_json(),
             )
-            
-            dataset.append({
-                "instruction": "You are an underwriting risk analyst. Review the verified applicant metrics, evaluate the financial ratios, and output the formal underwriting memo JSON.",
-                "input_context": input_context,
-                "expected_memo_json": memo.model_dump_json()
-            })
+            dataset.append(row.model_dump())
             
             samples_generated += 1
             seed += 1
-            print(f"Success: {samples_generated}/{total_samples} generated.")
+            logger.info("sample_generated", extra={"done": samples_generated, "total": total_samples})
             
             # Pause to respect Groq free tier Tokens Per Minute limits
             time.sleep(3) 
 
         except RateLimitError:
-            print("Groq Rate limit hit. Sleeping for 60 seconds before retrying...")
+            logger.warning("groq_rate_limited", extra={"sleep_seconds": 60})
             time.sleep(60)
         except Exception as e:
-            print(f"Validation or parsing error on seed {seed}: {e}")
+            logger.warning("sample_rejected", extra={"seed": seed, "error": str(e)[:300]})
             seed += 1 # Skip this seed and try the next one to avoid infinite loops
 
     # 3. Shuffle and split the dataset dynamically (80% / 10% / 10%)
-    print("Generation complete. Shuffling and splitting dataset...")
+    logger.info("generation_complete_splitting")
     random.seed(42)
     random.shuffle(dataset)
 
@@ -112,7 +116,7 @@ def generate_local_dataset(total_samples: int = 3000):
         with open(file_path, "w", encoding="utf-8") as f:
             for sample in samples:
                 f.write(json.dumps(sample) + "\n")
-        print(f"Saved {len(samples)} records to {file_path}")
+        logger.info("split_saved", extra={"records": len(samples), "path": str(file_path)})
 
 if __name__ == "__main__":
     generate_local_dataset(total_samples=3000)

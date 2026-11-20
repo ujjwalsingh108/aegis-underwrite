@@ -9,15 +9,18 @@ This ensures the pipeline never emits a hallucinated memo and always traps
 fatal regulatory/credit breaches before leaving the system.
 """
 
-import pytest
 from src.common.schemas import (
     ApplicantProfile,
+    EntityType,
     ExtractedFinancialMetrics,
+    LLMAdvisoryStatus,
     MultimodalFraudMetrics,
     UnderwritingDecision,
-    EntityType
+    UnderwritingMemo,
 )
-from src.engine.pipeline import UnderwritingPipeline
+from src.engine.guardrails import reconcile_with_advisory
+from src.engine.pipeline import Rule, UnderwritingPipeline
+
 
 def test_guardrail_rejects_severe_income_discrepancy():
     """
@@ -132,3 +135,50 @@ def test_guardrail_fatal_fraud_and_sanctions():
     assert memo.approved_loan_amount == 0.0
     assert memo.overall_fraud_probability == 0.85
     assert any("OFAC/Sanctions" in breach for breach in memo.breached_policies)
+
+def _clean_memo(decision=UnderwritingDecision.APPROVE) -> UnderwritingMemo:
+    return UnderwritingMemo(
+        application_id="APP-1", decision=decision, liquidity_runway_months=12,
+        approved_loan_amount=100.0 if decision != UnderwritingDecision.REJECT_CREDIT else 0.0,
+    )
+
+
+def test_corporate_without_financials_goes_to_manual_review():
+    """Previously a corp with no DSCR inputs received CONDITIONAL_APPROVAL for the full amount."""
+    profile = ApplicantProfile(
+        applicant_id="APP-NOFIN", entity_type=EntityType.CORP, requested_loan_amount=100000.0,
+        stated_monthly_income=0.0, total_monthly_debt=1000.0, liquid_assets=100000.0,
+    )
+    metrics = ExtractedFinancialMetrics(
+        verified_monthly_income=0.0, detected_monthly_liabilities=1000.0,
+        verified_liquid_reserves=100000.0, income_variance_pct=0.0,
+        fraud_metrics=MultimodalFraudMetrics(kyc_confidence_score=0.99, document_tampering_score=0.0),
+    )
+    result = UnderwritingPipeline().evaluate(profile, metrics)
+    assert result.memo.decision == UnderwritingDecision.MANUAL_REVIEW
+    assert result.decision_rule == Rule.INCOMPLETE_FINANCIALS
+
+
+def test_llm_more_conservative_escalates_to_manual_review():
+    memo, advisory = reconcile_with_advisory(
+        _clean_memo(), _clean_memo(UnderwritingDecision.REJECT_CREDIT), LLMAdvisoryStatus.COMPLETED
+    )
+    assert memo.decision == UnderwritingDecision.MANUAL_REVIEW
+    assert advisory.escalated
+
+
+def test_llm_cannot_relax_a_rejection():
+    memo, advisory = reconcile_with_advisory(
+        _clean_memo(UnderwritingDecision.REJECT_CREDIT), _clean_memo(), LLMAdvisoryStatus.COMPLETED
+    )
+    assert memo.decision == UnderwritingDecision.REJECT_CREDIT
+    assert not advisory.escalated
+
+
+def test_missing_llm_is_recorded_in_audit_trail():
+    memo, advisory = reconcile_with_advisory(
+        _clean_memo(), None, LLMAdvisoryStatus.FAILED, "LLM advisory unavailable (TimeoutError)."
+    )
+    assert memo.decision == UnderwritingDecision.APPROVE
+    assert advisory.status == LLMAdvisoryStatus.FAILED
+    assert memo.audit_trail[-1].step_name == "LLMAdvisoryReview"

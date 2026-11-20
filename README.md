@@ -69,3 +69,47 @@ To install the current folder containing __pyproject.toml__, pass __.__ (the dot
 - `Type Safety & Early Failure:` Using Pydantic for configuration guarantees that if an environment variable is malformed (e.g., passing `"abc"` for a numeric ratio threshold), the application will crash during startup with a descriptive error instead of failing hours into a long GPU workload.
 
 - `Separation of Secrets:` Sensitive credentials (like API keys) reside in a local `.env` file (ignored by Git), while the config file defines how the application securely ingests them.
+
+## Running the API
+
+```bash
+python -m venv .venv && .venv\Scripts\Activate.ps1      # or: source .venv/bin/activate
+pip install -e ".[dev]"                                  # gateway + tests (no GPU stack)
+copy .env.example .env                                   # then set the three API keys
+```
+
+| Task | Command |
+|---|---|
+| Run API locally (no Modal/GPU) | `$env:LLM_REVIEW_ENABLED="false"; uvicorn src.api.main:app --port 8000` |
+| Tests | `pytest` |
+| Lint / typecheck | `ruff check src tests` / `mypy src --exclude src/ui` |
+| Deploy gateway + GPU worker | `modal deploy src/serving/vllm_engine.py` |
+| GPU smoke test | `modal run src/serving/vllm_engine.py` |
+| LoRA training | `modal run src/training/modal_train.py` |
+| Generate teacher dataset | `pip install -e ".[data]"; python -m src.training.dataset_generator` |
+| Underwriter console | `pip install -e ".[ui]"; $env:AEGIS_API_URL="..."; $env:AEGIS_API_KEY="..."; python -m src.ui.dashboard` |
+
+All configuration lives in `src/common/config.py` and is documented in `.env.example`. In
+`staging`/`production` the app refuses to start with placeholder, short, or duplicate API keys.
+
+### Endpoints
+
+| Method | Path | Roles | Purpose |
+|---|---|---|---|
+| GET | `/health` | public | Liveness |
+| GET | `/ready` | public | Readiness (decision ledger reachable) |
+| GET | `/auth/me` | all | Caller identity / role |
+| POST | `/underwrite` | ADMIN, UNDERWRITER | Underwrite a JSON application |
+| POST | `/underwrite/document` | ADMIN, UNDERWRITER | Same, multipart with a supporting PDF (`application` = JSON string, `file` = PDF) |
+| GET | `/decisions` | all | Paginated decision ledger (`limit`, `offset`, `application_id`, `decision`) |
+| GET | `/decisions/{decision_id}` | all | One decision record |
+
+Authenticate with the `X-API-Key` header. OpenAPI docs at `/docs` (disabled by default in production).
+
+### How a decision is made
+
+1. **Verification metrics** (`src/engine/verification.py`): variance and anomaly flags from stated vs verified figures and the supplied KYC/fraud scores.
+2. **Rules engine, the decision of record** (`src/engine/pipeline.py`): ratios on conservative figures (verified income, higher of stated/detected debt, lower of stated/verified reserves), then an ordered waterfall `R1`–`R7`. Every response carries `decision_rule` and `decision_reasons`.
+3. **LLM advisory** (`src/serving/vllm_engine.py`, optional): the LoRA-tuned model reviews the same canonical prompt it was trained on (`src/common/prompts.py`).
+4. **Guardrail** (`src/engine/guardrails.py`): the LLM can only escalate APPROVE/CONDITIONAL to MANUAL_REVIEW. It can never approve, relax, or reject. If the LLM fails, the deterministic decision stands and the failure is recorded.
+5. **Ledger + audit log** (`src/engine/decision_store.py`): every decision is persisted and emitted as a structured `underwriting_decision` JSON log line.

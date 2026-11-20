@@ -8,6 +8,7 @@ accelerated serverless workloads. All ML inference is strictly constrained to GP
 
 import modal
 from modal import asgi_app
+
 from src.common.config import settings
 
 app_volume = modal.Volume.from_name(settings.modal_volume_name, create_if_missing=True)
@@ -20,8 +21,9 @@ gateway_image = (
         "starlette==0.38.2",
         "pydantic>=2.7.0",
         "pydantic-settings>=2.2.0",
-        "requests>=2.31.0",
-        "python-multipart==0.0.9"  # REQUIRED for FastAPI UploadFile (PDFs)
+        "python-multipart==0.0.9",  # REQUIRED for FastAPI UploadFile (PDFs)
+        "pypdf>=4.2.0",             # /underwrite/document text extraction
+        "pdfplumber>=0.11.0",       # /underwrite/document table extraction
     )
     .add_local_python_source("src")
 )
@@ -54,12 +56,12 @@ gpu_image = (
 app = modal.App(name=settings.app_name)
 
 @app.function(
-    image=gateway_image,  # Explicitly assign the gateway image
-    volumes={settings.lora_output_dir: app_volume},  # Fix NameError: use app_volume
+    image=gateway_image,
+    # The gateway needs no model weights; it only calls the GPU class remotely.
     secrets=[
         modal.Secret.from_name("underwriting_hf_token"),
         modal.Secret.from_name("aegis-rbac-keys"),
-    ]
+    ],
 )
 @asgi_app()
 def web_endpoint():

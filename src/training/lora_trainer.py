@@ -7,28 +7,26 @@ This script runs strictly on GPU, utilizing FlashAttention-2, bfloat16 precision
 and gradient checkpointing to maximize training throughput and memory efficiency.
 """
 
-from dataclasses import dataclass
-from typing import Dict, List, Any
-from pydantic import BaseModel, Field
+import os
+from typing import Any
+
 import torch
 from datasets import load_dataset
-from peft import LoraConfig, get_peft_model, TaskType
+from peft import LoraConfig, TaskType, get_peft_model
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    TrainingArguments,
+    DataCollatorForLanguageModeling,
     Trainer,
-    DataCollatorForLanguageModeling
+    TrainingArguments,
 )
+from transformers.trainer_utils import get_last_checkpoint
+
 from src.common.config import settings
+from src.common.logger import get_logger
+from src.common.prompts import to_chatml
 
-
-@dataclass
-class UnderwritingTrainingSample(BaseModel):
-    """Structured training sample for supervised fine-tuning of the Qwen model."""
-    instruction: str = Field(..., min_length=1)
-    input_context: str = Field(..., min_length=1)
-    expected_memo_json: str = Field(..., min_length=1)
+logger = get_logger("lora_trainer")
 
 
 class UnderwritingLoRATrainer:
@@ -79,15 +77,13 @@ class UnderwritingLoRATrainer:
         peft_model.print_trainable_parameters()
         return peft_model
 
-    def format_prompt(self, sample: Dict[str, Any]) -> str:
-        """Formats the input into Qwen's native ChatML structure."""
-        return (
-            f"<|im_start|>system\n{sample['instruction']}<|im_end|>\n"
-            f"<|im_start|>user\n{sample['input_context']}<|im_end|>\n"
-            f"<|im_start|>assistant\n{sample['expected_memo_json']}<|im_end|>"
+    def format_prompt(self, sample: dict[str, Any]) -> str:
+        """Formats the input into Qwen's native ChatML structure (shared with serving)."""
+        return to_chatml(
+            sample["instruction"], sample["input_context"], sample["expected_memo_json"]
         )
 
-    def tokenize_function(self, examples: Dict[str, List[Any]]) -> Dict[str, torch.Tensor]:
+    def tokenize_function(self, examples: dict[str, list[Any]]) -> dict[str, torch.Tensor]:
         """Maps over the dataset, formats the prompt, and tokenizes it."""
         prompts = [
             self.format_prompt({
@@ -98,7 +94,8 @@ class UnderwritingLoRATrainer:
             for inst, ctx, memo in zip(
                 examples['instruction'], 
                 examples['input_context'], 
-                examples['expected_memo_json']
+                examples['expected_memo_json'],
+                strict=True,
             )
         ]
         
@@ -163,16 +160,21 @@ class UnderwritingLoRATrainer:
             data_collator=data_collator,
         )
 
-        print("Starting LoRA Fine-Tuning...")
+        # Resume only when a checkpoint exists: resume_from_checkpoint=True raises on a fresh run.
+        last_checkpoint = (
+            get_last_checkpoint(self.output_dir) if os.path.isdir(self.output_dir) else None
+        )
+        logger.info("training_started", extra={"resume_from": last_checkpoint})
 
-        # 1. Import the exact module where the function is executing
-        import transformers.trainer
-        
-        # 2. Overwrite the local reference inside that specific module
-        transformers.trainer.check_torch_load_is_safe = lambda: None    # type: ignore
-        trainer.train(resume_from_checkpoint=True)
-        
-        print(f"Training complete. Saving adapter to {self.output_dir}")
+        if last_checkpoint:
+            # The GPU image pins torch 2.3, which transformers refuses for torch.load (CVE-2025-32434).
+            # Checkpoints are only ever read from our own Modal volume, so the check is bypassed
+            # for resume. Remove this once the image moves to torch>=2.6.
+            import transformers.trainer
+            transformers.trainer.check_torch_load_is_safe = lambda: None    # type: ignore
+        trainer.train(resume_from_checkpoint=last_checkpoint)
+
+        logger.info("training_complete", extra={"output_dir": self.output_dir})
         # Save directly from peft_model to bypass Pylance's Optional[PreTrainedModel] warning on trainer.model
         peft_model.save_pretrained(self.output_dir)
         self.tokenizer.save_pretrained(self.output_dir)

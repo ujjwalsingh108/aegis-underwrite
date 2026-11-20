@@ -9,7 +9,10 @@ before dispatching to Modal GPUs.
 """
 
 import pytest
-from src.training.lora_trainer import UnderwritingTrainingSample
+
+from src.common.prompts import to_chatml
+from src.common.schemas import UnderwritingTrainingSample
+
 
 def test_training_sample_validation():
     """State & Lifecycle: Verifies the Pydantic structure of a single training row."""
@@ -29,3 +32,10 @@ def test_training_sample_missing_context():
             input_context="", # Empty context should fail validation in your schema
             expected_memo_json="{}"
         )
+
+def test_training_and_inference_prompts_share_a_prefix():
+    """Guards against train/serve skew: inference prompt == training row minus the completion."""
+    train = to_chatml("Sys", "Ctx", '{"decision": "APPROVE"}')
+    infer = to_chatml("Sys", "Ctx")
+    assert train.startswith(infer)
+    assert train.endswith('{"decision": "APPROVE"}<|im_end|>')

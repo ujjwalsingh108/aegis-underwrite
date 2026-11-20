@@ -1,42 +1,56 @@
-# Tests the master pipeline controller, ensuring sequential execution and critical filesystem cleanup.
+# Tests the underwriting service: sequential execution, persistence and temp-file cleanup.
+
+import glob
+import os
+import tempfile
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import os
-from unittest.mock import patch, AsyncMock
+
+from src.common.schemas import DecisionRecord, UnderwriteRequest
+from src.engine.decision_store import DecisionStore
 from src.engine.orchestrator import PipelineOrchestrator
-from src.common.schemas import UnderwritingMemo
-from fastapi import UploadFile
+
 
 @pytest.fixture
-def mock_upload_file():
-    file = AsyncMock(spec=UploadFile)
-    file.read.return_value = b"%PDF-1.4 Mock PDF Bytes"
-    return file
+def store():
+    s = DecisionStore(":memory:")
+    s.open()
+    yield s
+    s.close()
 
-@pytest.mark.asyncio
-@patch("src.engine.orchestrator.FinancialDocumentParser")
-@patch("src.engine.orchestrator.UnderwritingLLMEngine")
-async def test_orchestrator_pipeline_execution_and_cleanup(MockEngine, MockParser, mock_upload_file):
-    """State & Lifecycle: Ensures the orchestrator runs sequential steps and deletes the temp file."""
-    
-    # Setup Mocks
-    mock_engine_instance = MockEngine.return_value
-    mock_engine_instance._stream_internal.return_value = AsyncMock()
-    
-    # Mock async generator for _stream_internal
-    async def mock_stream(*args, **kwargs):
-        yield '{"application_id": "APP-9921", "decision": "APPROVE", "calculated_dti": 0.3, "calculated_dscr": 1.5, "liquidity_runway_months": 10, "breached_policies": [], "risk_factors": [], "required_covenants": [], "audit_trail": []}'
-    mock_engine_instance._stream_internal = mock_stream
-    
-    orchestrator = PipelineOrchestrator()
-    
-    # Execute Pipeline
-    memo = await orchestrator.process_application(mock_upload_file)
-    
-    # Assertions
-    assert isinstance(memo, UnderwritingMemo)
-    assert memo.decision.value == "APPROVE"
-    
-    # Verify cleanup (Cannot track exact tempname easily without mocking tempfile, 
-    # but we test that no dangling .pdf files are left in the working directory)
-    assert not any(f.endswith('.pdf') for f in os.listdir('.'))
+
+async def test_orchestrator_document_flow_and_cleanup(store, underwrite_payload, blank_pdf_bytes):
+    before = set(glob.glob(os.path.join(tempfile.gettempdir(), "*.pdf")))
+    orchestrator = PipelineOrchestrator(store=store, llm_enabled=False)
+
+    record = await orchestrator.process_application(
+        UnderwriteRequest(**underwrite_payload),
+        blank_pdf_bytes,
+        "statement.pdf",
+        decided_by="tester",
+        decided_by_role="UNDERWRITER",
+    )
+
+    assert isinstance(record, DecisionRecord)
+    assert record.memo.application_id == "APP-111"  # from the request, not a placeholder
+    assert record.source_document == "statement.pdf"
+    assert await store.get(record.decision_id) is not None
+    after = set(glob.glob(os.path.join(tempfile.gettempdir(), "*.pdf")))
+    assert after <= before  # temp PDF removed
+
+
+async def test_orchestrator_sends_canonical_prompt(store, underwrite_payload):
+    llm = MagicMock()
+    llm.generate_memo.remote.aio = AsyncMock(side_effect=ValueError("bad json"))
+    orchestrator = PipelineOrchestrator(store=store, llm=llm, llm_enabled=True)
+
+    record = await orchestrator.underwrite(
+        UnderwriteRequest(**underwrite_payload), decided_by="t", decided_by_role="ADMIN"
+    )
+
+    prompt = llm.generate_memo.remote.aio.call_args.args[0]
+    assert prompt.startswith("<|im_start|>system\nYou are an underwriting risk analyst.")
+    assert "Applicant ID: APP-111\nEntity Type: INDIVIDUAL" in prompt
+    assert record.llm_advisory.status.value == "FAILED"
+    assert record.memo.decision.value == "APPROVE"

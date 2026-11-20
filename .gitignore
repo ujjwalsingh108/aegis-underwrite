@@ -12,6 +12,7 @@ venv/
 .env
 *.local.env
 .env.*
+!.env.example
 
 # Modal temporary directories
 .modal/
@@ -22,6 +23,10 @@ data/cache/
 *.pdf
 *.png
 *.jpg
+
+# Local decision ledger (SQLite)
+data/*.db
+data/*.db-*
 
 # Testing & coverage
 .pytest_cache/

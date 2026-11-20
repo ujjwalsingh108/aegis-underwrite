@@ -8,9 +8,10 @@ Uses mocking to bypass the Groq API network calls and sleep timers during CI/CD 
 import json
 import os
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-from src.training.dataset_generator import generate_local_dataset
+from unittest.mock import MagicMock, patch
+
 from src.common.schemas import UnderwritingDecision
+from src.training.dataset_generator import generate_local_dataset
 
 # Mock output matching the Groq LLM's generated schema
 MOCK_GROQ_OUTPUT = {
@@ -42,13 +43,13 @@ MOCK_GROQ_OUTPUT = {
 
 @patch("src.training.dataset_generator.Groq")
 @patch("src.training.dataset_generator.time.sleep")
-def test_generate_and_split_dataset_logic(mock_sleep, MockGroq, tmp_path: Path):
+def test_generate_and_split_dataset_logic(mock_sleep, mock_groq, tmp_path: Path):
     """
     Tests that the Groq raw JSON outputs are correctly parsed by the deterministic
     pipeline, formatted for LoRA training, and split into Train/Eval/Test files.
     """
     # 1. Setup Mocks
-    mock_client_instance = MockGroq.return_value
+    mock_client_instance = mock_groq.return_value
     
     # Mock the nested Groq response object: response.choices[0].message.content
     mock_message = MagicMock()
@@ -80,7 +81,7 @@ def test_generate_and_split_dataset_logic(mock_sleep, MockGroq, tmp_path: Path):
         assert test_file.exists()
 
         # 4. Assert Content and Schema Integrity
-        with open(train_file, "r", encoding="utf-8") as f:
+        with open(train_file, encoding="utf-8") as f:
             lines = f.readlines()
             assert len(lines) == 8  # 80% of 10 samples
             
